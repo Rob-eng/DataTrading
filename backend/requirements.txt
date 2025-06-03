@@ -1,0 +1,15 @@
+fastapi==0.111.0  # Use a versão mais recente estável ou a que preferir
+uvicorn[standard]==0.29.0
+sqlalchemy==2.0.30
+psycopg2-binary==2.9.9 # Driver para PostgreSQL
+pydantic==2.7.1
+pydantic-settings==2.2.1 # Para carregar configurações do .env e validar
+python-dotenv==1.0.1
+pandas==2.2.2      # Ainda útil para manipulação de dados
+numpy==1.26.4
+
+# Se você planeja gerar PDFs/Excel diretamente do backend no futuro (para relatórios não interativos):
+# reportlab==4.2.0
+# openpyxl==3.1.2
+# matplotlib==3.8.4
+# seaborn==0.13.2

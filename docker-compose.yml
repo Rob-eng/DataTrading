@@ -1,0 +1,71 @@
+version: '3.8' # Especifica a versão do formato do arquivo Compose
+
+services:
+  # Serviço do Backend FastAPI
+  backend:
+    build:
+      context: ./backend  # Caminho para o diretório que contém o Dockerfile do backend
+      dockerfile: Dockerfile # Nome do Dockerfile a ser usado
+    container_name: robdatatrading_api # Nome amigável para o contêiner
+    restart: unless-stopped # Política de reinicialização (ex: sempre, a menos que parado manualmente)
+    env_file:
+      - .env # Carrega variáveis de ambiente do arquivo .env na raiz do projeto
+    expose:
+      - "8000" # Expõe a porta 8000 internamente para outros contêineres na mesma rede
+    depends_on:
+      db: # Garante que o serviço 'db' esteja pronto antes de iniciar o 'backend'
+        condition: service_healthy # Espera o healthcheck do 'db' passar
+    networks:
+      - app_network # Conecta este serviço à rede customizada 'app_network'
+    volumes: # Monta o código do backend para desenvolvimento com hot-reloading
+      # ATENÇÃO: Em produção, você geralmente NÃO monta o código assim.
+      # O código é copiado para a imagem durante o 'docker compose build'.
+      # Este volume é para que as alterações no código local reflitam no contêiner
+      # instantaneamente quando o Uvicorn está rodando com --reload.
+      - ./backend/app:/app/app # Monta a pasta ./backend/app local em /app/app no contêiner
+
+  # Serviço do Banco de Dados PostgreSQL
+  db:
+    image: postgres:15-alpine # Usa uma imagem oficial e leve do PostgreSQL
+    container_name: robdatatrading_db
+    restart: unless-stopped
+    volumes:
+      - postgres_data_rob:/var/lib/postgresql/data # Volume nomeado para persistir os dados do banco
+    env_file:
+      - .env # Carrega variáveis POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB do .env
+    # ports: # Descomente APENAS para debug/acesso direto ao banco de fora do Docker
+    #   - "5433:5432" # Mapeia a porta 5432 do contêiner para a 5433 do host
+    networks:
+      - app_network
+    healthcheck: # Verifica se o PostgreSQL está pronto para aceitar conexões
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -q"] # -q para modo silencioso
+      interval: 10s # Verifica a cada 10 segundos
+      timeout: 5s   # Timeout para a verificação
+      retries: 5    # Tenta 5 vezes antes de marcar como não saudável
+
+  # Serviço do Nginx (Proxy Reverso)
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: robdatatrading_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80" # Mapeia a porta 80 do host para a porta 80 do contêiner Nginx
+      # - "443:443" # Para HTTPS no futuro
+    volumes:
+      # Monta o arquivo de configuração customizado do Nginx
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro # :ro = read-only
+      # Se tiver frontend estático no futuro, montaria aqui:
+      # - ./frontend/dist:/usr/share/nginx/html/static:ro
+    depends_on:
+      - backend # Garante que o serviço 'backend' seja iniciado antes (ou pelo menos tentado)
+    networks:
+      - app_network
+
+# Define a rede customizada para comunicação entre os contêineres
+networks:
+  app_network:
+    driver: bridge # Tipo de rede padrão
+
+# Define o volume nomeado para persistência dos dados do PostgreSQL
+volumes:
+  postgres_data_rob: # Nome do volume

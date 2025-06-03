@@ -1,0 +1,39 @@
+# Ambiente virtual local (se você criar um fora do Docker para desenvolvimento)
+.venv/
+venv/
+env/
+
+# Cache Python
+__pycache__/
+*.py[cod] # .pyc, .pyo, .pyd
+
+# Arquivos sensíveis
+.env # Importante para não comitar credenciais
+*.env.* # Para variações como .env.local, .env.prod
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.sublime-project
+*.sublime-workspace
+
+# Logs e temporários
+*.log
+*.log.*
+*.tmp
+
+# Diretório de relatórios (se for gerado localmente e não precisar ir para o Git)
+# relatorios/
+
+# Docker
+# Dockerfile e docker-compose.yml geralmente SÃO commitados
+# mas se tiver alguma configuração local específica, pode ignorar
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Outputs de build do frontend (se você adicionar um no futuro)
+# frontend/dist/
+# frontend/node_modules/
