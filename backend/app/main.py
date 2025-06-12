@@ -1,3 +1,4 @@
+import logging
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
@@ -7,20 +8,36 @@ from .database import engine, Base, get_db # Importa engine, Base e get_db
 from . import models, schemas, crud      # Importa módulos locais
 from .routers import operacoes, robos, uploads        # Importa o router de operações
 
-# --- CRIAÇÃO DAS TABELAS NO BANCO DE DADOS ---
-# Esta linha garante que todas as tabelas definidas em models.py
-# (que herdam de Base) sejam criadas no banco de dados conectado
-# pelo 'engine' QUANDO a aplicação FastAPI inicia.
-# Em um ambiente de produção mais robusto, você usaria ferramentas
-# de migração como Alembic para gerenciar mudanças no esquema do banco.
-# Para desenvolvimento e simplicidade inicial, isto é suficiente.
+logger = logging.getLogger(__name__)
+
+def create_tables_in_schema(db_engine, schema_name: str):
+    """
+    Cria todas as tabelas definidas em models.Base no schema especificado,
+    se elas ainda não existirem. O schema já deve existir.
+    """
+    logger.info(f"Verificando/criando tabelas para o schema: '{schema_name}'")
+    try:
+        # Itera sobre todas as tabelas definidas nos seus modelos SQLAlchemy
+        for table in models.Base.metadata.sorted_tables:
+            # Cria uma referência à tabela com o schema especificado
+            table_with_schema = table.tometadata(models.Base.metadata, schema=schema_name)
+            # Cria a tabela no banco de dados se ela não existir
+            table_with_schema.create(bind=db_engine, checkfirst=True)
+        logger.info(f"Tabelas no schema '{schema_name}' verificadas/criadas com sucesso.")
+    except Exception as e_tbl:
+        logger.error(f"Erro ao criar tabelas no schema '{schema_name}': {e_tbl}", exc_info=True)
+        raise # Re-levanta a exceção para parar a inicialização se necessário
+
+
 try:
-    models.Base.metadata.create_all(bind=engine)
-    print("Tabelas criadas (ou já existentes) no banco de dados.")
-except Exception as e:
-    print(f"ERRO ao tentar criar tabelas: {e}")
-    # Em um cenário real, você pode querer tratar isso de forma mais robusta
-    # ou até impedir o início da aplicação se o banco não estiver acessível.
+    # Primeiro, garanta que os schemas existem (você criou manualmente)
+    # Agora, crie as tabelas DENTRO desses schemas
+    create_tables_in_schema(engine, "oficial")
+    create_tables_in_schema(engine, "uploads_usuarios")
+    print("Tabelas nos schemas 'oficial' e 'uploads_usuarios' verificadas/criadas.")
+except Exception as e_init:
+    print(f"ERRO CRÍTICO durante a inicialização e criação de tabelas: {e_init}")
+    # Em um cenário de produção, você pode querer que a aplicação não inicie se isso falhar.
 
 # Cria a instância da aplicação FastAPI
 app = FastAPI(
