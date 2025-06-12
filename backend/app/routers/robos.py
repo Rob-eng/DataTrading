@@ -14,28 +14,18 @@ router = APIRouter(
 @router.post("/", response_model=schemas.RoboRead, status_code=201)
 def criar_novo_robo(
     robo_in: schemas.RoboCreate,
+    schema: str = Query("uploads_usuarios", description="Schema para operar: 'oficial' ou 'uploads_usuarios'"), # Exemplo com Query Param
     db: Session = Depends(get_db)
 ):
-    """
-    Cria um novo robô.
-    Retorna erro 400 se um robô com o mesmo nome já existir.
-    """
-    db_robo_existente = crud.get_robo_by_nome(db, nome=robo_in.nome)
-    if db_robo_existente:
-        raise HTTPException(status_code=400, detail=f"Robô com o nome '{robo_in.nome}' já existe.")
-    return crud.create_robo(db=db, robo_in=robo_in)
+    # ... (lógica para verificar se existe) ...
+    return crud.create_robo(db=db, robo_in=robo_in, schema_name=schema)
 
 @router.get("/", response_model=List[schemas.RoboRead])
 def listar_robos(
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db)
+    schema: str = Query("uploads_usuarios", description="Schema para operar"),
+    # ... (skip, limit) ...
 ):
-    """
-    Retorna uma lista de robôs cadastrados.
-    """
-    robos = crud.get_robos(db, skip=skip, limit=limit)
-    return robos
+    return crud.get_robos(db, schema_name=schema, skip=skip, limit=limit)
 
 @router.get("/{robo_id}", response_model=schemas.RoboRead)
 def ler_robo_por_id(

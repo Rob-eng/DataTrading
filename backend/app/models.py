@@ -7,6 +7,7 @@ from .database import Base # Importa a classe Base que criamos
 
 class Robo(Base):
     __tablename__ = "robos"
+    __table_args__ = {'schema': None}
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     nome = Column(String(100), unique=True, index=True, nullable=False) # Nome do robô deve ser único
@@ -27,13 +28,15 @@ class TipoOperacaoEnum(str, enum.Enum):
 
 class Operacao(Base):
     __tablename__ = "operacoes" # Nome da tabela no banco de dados
-
+    __table_args__ = {'schema': None}
     # Coluna de ID, chave primária, auto-incrementável
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
 
-    robo_id = Column(Integer, ForeignKey("robos.id"), nullable=False, index=True) # Aponta para robos.id
+    robo_id = Column(Integer, ForeignKey("robos.id", use_alter=True, name="fk_operacao_robo_id"), nullable=False, index=True) # Aponta para robos.id
     # Removido o setup_robo direto, agora será via relacionamento
     # setup_robo = Column(String(100), index=True, nullable=False, name="Robo")
+    
+    fonte_dados_id = Column(String(100), index=True, nullable=True) # Ou Integer se for ID de usuário
     
     # Coluna para o nome do setup ou robô
     # index=True cria um índice nesta coluna para buscas mais rápidas
@@ -51,7 +54,7 @@ class Operacao(Base):
     # Informações adicionais da operação
     ativo = Column(String(50), nullable=True) # Ex: "WINM24", "PETR4"
     lotes = Column(Float, nullable=True)      # Quantidade de lotes/contratos
-    tipo = Column(DBEnum(TipoOperacaoEnum, name="tipo_operacao_enum"), nullable=True, default=TipoOperacaoEnum.DESCONHECIDO) # C ou V
+    tipo = Column(DBEnum(TipoOperacaoEnum, name="tipo_operacao_enum_v2"), nullable=True, default=TipoOperacaoEnum.DESCONHECIDO)
 
     # Coluna para registrar quando o registro foi criado no banco
     # server_default=func.now() usa a função NOW() do PostgreSQL
@@ -66,6 +69,12 @@ class Operacao(Base):
         return (f"<Operacao(id={self.id}, robo_id='{self.robo_id}', "
                 f"resultado={self.resultado}, abertura='{self.data_abertura}')>")
 
+def get_operacao_model_for_schema(schema_name: Optional[str]):
+    # Retorna uma nova classe Operacao com o schema definido, se necessário
+    # Isso é mais complexo e geralmente não é a forma padrão de lidar com schemas dinâmicos em queries
+    # A forma mais comum é usar table.tometadata(metadata_obj_com_schema) ou especificar na query.
+    # Por simplicidade no CRUD, vamos tentar outra abordagem.
+    pass
 # Você pode adicionar outros modelos aqui no futuro, como uma tabela para Robos, Ativos, etc.
 # Exemplo (não vamos usar agora, mas para ilustração):
 # class Robo(Base):
