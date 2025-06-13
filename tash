@@ -1,0 +1,398 @@
+[1mdiff --git a/backend/app/crud.py b/backend/app/crud.py[m
+[1mindex 0519ecb..6699e4b 100644[m
+[1m--- a/backend/app/crud.py[m
+[1m+++ b/backend/app/crud.py[m
+[36m@@ -1 +1,241 @@[m
+[31m- [m
+\ No newline at end of file[m
+[32m+[m[32mfrom sqlalchemy.orm import Session, sessionmaker[m
+[32m+[m[32mfrom sqlalchemy import text[m
+[32m+[m[32mfrom typing import List, Optional[m
+[32m+[m[32mimport logging[m
+[32m+[m
+[32m+[m[32mfrom . import models, schemas[m
+[32m+[m[32mfrom .database import engine[m
+[32m+[m
+[32m+[m[32mlogger = logging.getLogger(__name__)[m
+[32m+[m
+[32m+[m[32mdef get_session_for_schema(schema_name: str) -> Session:[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Cria uma sessão configurada para operar em um schema específico.[m
+[32m+[m[32m    """[m
+[32m+[m[32m    # Criar uma nova sessão[m
+[32m+[m[32m    SessionClass = sessionmaker(bind=engine)[m
+[32m+[m[32m    session = SessionClass()[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Definir o search_path para o schema específico[m
+[32m+[m[32m    session.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m    [m
+[32m+[m[32m    return session[m
+[32m+[m
+[32m+[m[32m# ===== FUNÇÕES CRUD PARA ROBÔS =====[m
+[32m+[m
+[32m+[m[32mdef get_robo_by_id(db: Session, robo_id: int, schema_name: str = "uploads_usuarios") -> Optional[models.Robo]:[m
+[32m+[m[32m    """Busca um robô pelo ID no schema especificado."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        return db.query(models.Robo).filter(models.Robo.id == robo_id).first()[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao buscar robô por ID {robo_id} no schema {schema_name}: {e}")[m
+[32m+[m[32m        return None[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_robo_by_nome(db: Session, nome: str, schema_name: str = "uploads_usuarios") -> Optional[models.Robo]:[m
+[32m+[m[32m    """Busca um robô pelo nome no schema especificado."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        return db.query(models.Robo).filter(models.Robo.nome == nome).first()[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao buscar robô por nome '{nome}' no schema {schema_name}: {e}")[m
+[32m+[m[32m        return None[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_robos(db: Session, schema_name: str = "uploads_usuarios", skip: int = 0, limit: int = 100) -> List[models.Robo]:[m
+[32m+[m[32m    """Lista robôs do schema especificado com paginação."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        return db.query(models.Robo).offset(skip).limit(limit).all()[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao listar robôs no schema {schema_name}: {e}")[m
+[32m+[m[32m        return [][m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef create_robo(db: Session, robo_in: schemas.RoboCreate, schema_name: str = "uploads_usuarios") -> models.Robo:[m
+[32m+[m[32m    """Cria um novo robô no schema especificado."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        db_robo = models.Robo(nome=robo_in.nome)[m
+[32m+[m[32m        db.add(db_robo)[m
+[32m+[m[32m        db.commit()[m
+[32m+[m[32m        db.refresh(db_robo)[m
+[32m+[m[41m        [m
+[32m+[m[32m        logger.info(f"Robô criado: ID={db_robo.id}, Nome='{db_robo.nome}' no schema '{schema_name}'")[m
+[32m+[m[32m        return db_robo[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao criar robô '{robo_in.nome}' no schema {schema_name}: {e}")[m
+[32m+[m[32m        db.rollback()[m
+[32m+[m[32m        raise[m
+[32m+[m
+[32m+[m
+[32m+[m[32m# ===== FUNÇÕES CRUD PARA OPERAÇÕES =====[m
+[32m+[m
+[32m+[m[32mdef get_operacao(db: Session, operacao_id: int, schema_name: str = "uploads_usuarios") -> Optional[models.Operacao]:[m
+[32m+[m[32m    """Busca uma operação pelo ID no schema especificado."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        return db.query(models.Operacao).filter(models.Operacao.id == operacao_id).first()[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao buscar operação por ID {operacao_id} no schema {schema_name}: {e}")[m
+[32m+[m[32m        return None[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_operacoes(db: Session, schema_name: str = "uploads_usuarios", skip: int = 0, limit: int = 100) -> List[models.Operacao]:[m
+[32m+[m[32m    """Lista operações do schema especificado com paginação."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        return ([m
+[32m+[m[32m            db.query(models.Operacao)[m
+[32m+[m[32m            .join(models.Robo, models.Operacao.robo_id == models.Robo.id)[m
+[32m+[m[32m            .offset(skip)[m
+[32m+[m[32m            .limit(limit)[m
+[32m+[m[32m            .all()[m
+[32m+[m[32m        )[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao listar operações no schema {schema_name}: {e}")[m
+[32m+[m[32m        return [][m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_operacoes_by_robo(db: Session, robo_id: int, schema_name: str = "uploads_usuarios", skip: int = 0, limit: int = 100) -> List[models.Operacao]:[m
+[32m+[m[32m    """Lista operações de um robô específico."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        return ([m
+[32m+[m[32m            db.query(models.Operacao)[m
+[32m+[m[32m            .filter(models.Operacao.robo_id == robo_id)[m
+[32m+[m[32m            .offset(skip)[m
+[32m+[m[32m            .limit(limit)[m
+[32m+[m[32m            .all()[m
+[32m+[m[32m        )[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao listar operações do robô {robo_id} no schema {schema_name}: {e}")[m
+[32m+[m[32m        return [][m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef create_operacao(db: Session, operacao_in: schemas.OperacaoCreate, robo_id_for_op: int, schema_name: str = "uploads_usuarios") -> models.Operacao:[m
+[32m+[m[32m    """Cria uma nova operação no schema especificado."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Criar a operação[m
+[32m+[m[32m        db_operacao = models.Operacao([m
+[32m+[m[32m            robo_id=robo_id_for_op,[m
+[32m+[m[32m            resultado=operacao_in.resultado,[m
+[32m+[m[32m            data_abertura=operacao_in.data_abertura,[m
+[32m+[m[32m            data_fechamento=operacao_in.data_fechamento,[m
+[32m+[m[32m            ativo=operacao_in.ativo,[m
+[32m+[m[32m            lotes=operacao_in.lotes,[m
+[32m+[m[32m            tipo=operacao_in.tipo[m
+[32m+[m[32m        )[m
+[32m+[m[41m        [m
+[32m+[m[32m        db.add(db_operacao)[m
+[32m+[m[32m        db.commit()[m
+[32m+[m[32m        db.refresh(db_operacao)[m
+[32m+[m[41m        [m
+[32m+[m[32m        logger.debug(f"Operação criada: ID={db_operacao.id}, Robô ID={robo_id_for_op}, Resultado={operacao_in.resultado}")[m
+[32m+[m[32m        return db_operacao[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao criar operação para robô {robo_id_for_op} no schema {schema_name}: {e}")[m
+[32m+[m[32m        db.rollback()[m
+[32m+[m[32m        raise[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef update_operacao(db: Session, operacao_id: int, operacao_update: schemas.OperacaoCreate, schema_name: str = "uploads_usuarios") -> Optional[models.Operacao]:[m
+[32m+[m[32m    """Atualiza uma operação existente."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        db_operacao = db.query(models.Operacao).filter(models.Operacao.id == operacao_id).first()[m
+[32m+[m[32m        if not db_operacao:[m
+[32m+[m[32m            return None[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Atualizar campos[m
+[32m+[m[32m        for field, value in operacao_update.dict(exclude_unset=True).items():[m
+[32m+[m[32m            if hasattr(db_operacao, field):[m
+[32m+[m[32m                setattr(db_operacao, field, value)[m
+[32m+[m[41m        [m
+[32m+[m[32m        db.commit()[m
+[32m+[m[32m        db.refresh(db_operacao)[m
+[32m+[m[41m        [m
+[32m+[m[32m        logger.info(f"Operação {operacao_id} atualizada no schema '{schema_name}'")[m
+[32m+[m[32m        return db_operacao[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao atualizar operação {operacao_id} no schema {schema_name}: {e}")[m
+[32m+[m[32m        db.rollback()[m
+[32m+[m[32m        raise[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef delete_operacao(db: Session, operacao_id: int, schema_name: str = "uploads_usuarios") -> bool:[m
+[32m+[m[32m    """Deleta uma operação."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        db_operacao = db.query(models.Operacao).filter(models.Operacao.id == operacao_id).first()[m
+[32m+[m[32m        if not db_operacao:[m
+[32m+[m[32m            return False[m
+[32m+[m[41m        [m
+[32m+[m[32m        db.delete(db_operacao)[m
+[32m+[m[32m        db.commit()[m
+[32m+[m[41m        [m
+[32m+[m[32m        logger.info(f"Operação {operacao_id} deletada do schema '{schema_name}'")[m
+[32m+[m[32m        return True[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao deletar operação {operacao_id} no schema {schema_name}: {e}")[m
+[32m+[m[32m        db.rollback()[m
+[32m+[m[32m        return False[m
+[32m+[m
+[32m+[m
+[32m+[m[32m# ===== FUNÇÕES ESTATÍSTICAS E RELATÓRIOS =====[m
+[32m+[m
+[32m+[m[32mdef get_estatisticas_robo(db: Session, robo_id: int, schema_name: str = "uploads_usuarios") -> dict:[m
+[32m+[m[32m    """Retorna estatísticas básicas de um robô."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        if schema_name != "public":[m
+[32m+[m[32m            db.execute(text(f"SET search_path TO {schema_name}, public"))[m
+[32m+[m[41m        [m
+[32m+[m[32m        operacoes = db.query(models.Operacao).filter(models.Operacao.robo_id == robo_id).all()[m
+[32m+[m[41m        [m
+[32m+[m[32m        if not operacoes:[m
+[32m+[m[32m            return {[m
+[32m+[m[32m                "total_operacoes": 0,[m
+[32m+[m[32m                "resultado_total": 0.0,[m
+[32m+[m[32m                "resultado_medio": 0.0,[m
+[32m+[m[32m                "operacoes_positivas": 0,[m
+[32m+[m[32m                "operacoes_negativas": 0,[m
+[32m+[m[32m                "taxa_acerto": 0.0[m
+[32m+[m[32m            }[m
+[32m+[m[41m        [m
+[32m+[m[32m        resultados = [op.resultado for op in operacoes][m
+[32m+[m[32m        positivas = sum(1 for r in resultados if r > 0)[m
+[32m+[m[32m        negativas = sum(1 for r in resultados if r < 0)[m
+[32m+[m[41m        [m
+[32m+[m[32m        return {[m
+[32m+[m[32m            "total_operacoes": len(operacoes),[m
+[32m+[m[32m            "resultado_total": sum(resultados),[m
+[32m+[m[32m            "resultado_medio": sum(resultados) / len(resultados),[m
+[32m+[m[32m            "operacoes_positivas": positivas,[m
+[32m+[m[32m            "operacoes_negativas": negativas,[m
+[32m+[m[32m            "taxa_acerto": (positivas / len(operacoes)) * 100 if operacoes else 0.0[m
+[32m+[m[32m        }[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.error(f"Erro ao calcular estatísticas do robô {robo_id} no schema {schema_name}: {e}")[m
+[32m+[m[32m        return {}[m[41m [m
+\ No newline at end of file[m
+[1mdiff --git a/backend/app/routers/operacoes.py b/backend/app/routers/operacoes.py[m
+[1mindex ae11b9a..8631f56 100644[m
+[1m--- a/backend/app/routers/operacoes.py[m
+[1m+++ b/backend/app/routers/operacoes.py[m
+[36m@@ -1,4 +1,4 @@[m
+[31m-from fastapi import APIRouter, Depends, HTTPException, Body [m
+[32m+[m[32mfrom fastapi import APIRouter, Depends, HTTPException, Body, Query[m
+ from sqlalchemy.orm import Session[m
+ from typing import List, Optional[m
+ import logging[m
+[36m@@ -21,6 +21,7 @@[m [mdef criar_nova_operacao([m
+     # robo_id e nome_robo_para_criacao são opcionais no schema OperacaoCreate,[m
+     # mas a lógica aqui garante que um deles (ou um robô encontrado) seja usado.[m
+     operacao_in: schemas.OperacaoCreate,[m
+[32m+[m[32m    schema: str = Query("uploads_usuarios", description="Schema para operar: 'oficial' ou 'uploads_usuarios'"),[m
+     db: Session = Depends(get_db)[m
+ ):[m
+     """[m
+[36m@@ -36,7 +37,7 @@[m [mdef criar_nova_operacao([m
+     robo_id_final: Optional[int] = None[m
+ [m
+     if operacao_in.robo_id is not None:[m
+[31m-        db_robo = crud.get_robo_by_id(db, robo_id=operacao_in.robo_id)[m
+[32m+[m[32m        db_robo = crud.get_robo_by_id(db, robo_id=operacao_in.robo_id, schema_name=schema)[m
+         if not db_robo:[m
+             raise HTTPException(status_code=404, detail=f"Robô com ID {operacao_in.robo_id} não encontrado.")[m
+         robo_id_final = db_robo.id[m
+[36m@@ -46,7 +47,7 @@[m [mdef criar_nova_operacao([m
+         if not nome_robo:[m
+              raise HTTPException(status_code=400, detail="Nome do robô para criação não pode ser vazio.")[m
+ [m
+[31m-        db_robo_existente = crud.get_robo_by_nome(db, nome=nome_robo)[m
+[32m+[m[32m        db_robo_existente = crud.get_robo_by_nome(db, nome=nome_robo, schema_name=schema)[m
+         if db_robo_existente:[m
+             robo_id_final = db_robo_existente.id[m
+             logger.info(f"Usando robô existente por nome: {robo_id_final} ({nome_robo})")[m
+[36m@@ -54,7 +55,7 @@[m [mdef criar_nova_operacao([m
+             # Cria um novo robô[m
+             logger.info(f"Robô '{nome_robo}' não encontrado. Criando novo robô...")[m
+             novo_robo_schema = schemas.RoboCreate(nome=nome_robo)[m
+[31m-            db_novo_robo = crud.create_robo(db=db, robo_in=novo_robo_schema)[m
+[32m+[m[32m            db_novo_robo = crud.create_robo(db=db, robo_in=novo_robo_schema, schema_name=schema)[m
+             robo_id_final = db_novo_robo.id[m
+             logger.info(f"Novo robô criado com ID: {robo_id_final} ({nome_robo})")[m
+     else:[m
+[36m@@ -67,12 +68,13 @@[m [mdef criar_nova_operacao([m
+         logger.error("Falha crítica: robo_id_final não foi definido antes de criar operação.")[m
+         raise HTTPException(status_code=500, detail="Não foi possível determinar o ID do robô para a operação.")[m
+     [m
+[31m-    db_operacao = crud.create_operacao(db=db, operacao_in=operacao_in, robo_id_for_op=robo_id_final)[m
+[32m+[m[32m    db_operacao = crud.create_operacao(db=db, operacao_in=operacao_in, robo_id_for_op=robo_id_final, schema_name=schema)[m
+     return db_operacao[m
+ [m
+ # Endpoint para listar operações (exemplo)[m
+ @router.get("/", response_model=List[schemas.OperacaoRead])[m
+ def listar_operacoes([m
+[32m+[m[32m    schema: str = Query("uploads_usuarios", description="Schema para operar: 'oficial' ou 'uploads_usuarios'"),[m
+     skip: int = 0,[m
+     limit: int = 100,[m
+     db: Session = Depends(get_db)[m
+[36m@@ -80,18 +82,19 @@[m [mdef listar_operacoes([m
+     """[m
+     Retorna uma lista de operações.[m
+     """[m
+[31m-    operacoes = crud.get_operacoes(db, skip=skip, limit=limit)[m
+[32m+[m[32m    operacoes = crud.get_operacoes(db, schema_name=schema, skip=skip, limit=limit)[m
+     return operacoes[m
+ [m
+ @router.get("/{operacao_id}", response_model=schemas.OperacaoRead)[m
+ def ler_operacao_por_id([m
+     operacao_id: int,[m
+[32m+[m[32m    schema: str = Query("uploads_usuarios", description="Schema para operar: 'oficial' ou 'uploads_usuarios'"),[m
+     db: Session = Depends(get_db)[m
+ ):[m
+     """[m
+     Retorna uma operação específica pelo seu ID.[m
+     """[m
+[31m-    db_operacao = crud.get_operacao(db, operacao_id=operacao_id)[m
+[32m+[m[32m    db_operacao = crud.get_operacao(db, operacao_id=operacao_id, schema_name=schema)[m
+     if db_operacao is None:[m
+         raise HTTPException(status_code=404, detail="Operação não encontrada")[m
+     return db_operacao[m
+[1mdiff --git a/backend/app/routers/robos.py b/backend/app/routers/robos.py[m
+[1mindex ec5f7e3..55d719d 100644[m
+[1m--- a/backend/app/routers/robos.py[m
+[1m+++ b/backend/app/routers/robos.py[m
+[36m@@ -49,4 +49,49 @@[m [mdef ler_robo_por_id([m
+         raise HTTPException(status_code=404, detail=f"Robô com ID {robo_id} não encontrado no schema '{schema}'.")[m
+     return db_robo[m
+ [m
+[32m+[m[32m# Endpoint para estatísticas do robô[m
+[32m+[m[32m@router.get("/{robo_id}/estatisticas")[m
+[32m+[m[32mdef obter_estatisticas_robo([m
+[32m+[m[32m    robo_id: int,[m
+[32m+[m[32m    schema: str = Query("uploads_usuarios", description="Schema para operar: 'oficial' ou 'uploads_usuarios'"),[m
+[32m+[m[32m    db: Session = Depends(get_db)[m
+[32m+[m[32m):[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Retorna estatísticas detalhadas de um robô específico.[m
+[32m+[m[32m    """[m
+[32m+[m[32m    # Verificar se o robô existe[m
+[32m+[m[32m    db_robo = crud.get_robo_by_id(db, robo_id=robo_id, schema_name=schema)[m
+[32m+[m[32m    if not db_robo:[m
+[32m+[m[32m        raise HTTPException(status_code=404, detail=f"Robô com ID {robo_id} não encontrado no schema '{schema}'.")[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Obter estatísticas[m
+[32m+[m[32m    stats = crud.get_estatisticas_robo(db, robo_id=robo_id, schema_name=schema)[m
+[32m+[m[41m    [m
+[32m+[m[32m    return {[m
+[32m+[m[32m        "robo_id": robo_id,[m
+[32m+[m[32m        "robo_nome": db_robo.nome,[m
+[32m+[m[32m        "schema": schema,[m
+[32m+[m[32m        **stats[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m@router.get("/{robo_id}/operacoes", response_model=List[schemas.OperacaoRead])[m
+[32m+[m[32mdef listar_operacoes_do_robo([m
+[32m+[m[32m    robo_id: int,[m
+[32m+[m[32m    schema: str = Query("uploads_usuarios", description="Schema para operar: 'oficial' ou 'uploads_usuarios'"),[m
+[32m+[m[32m    skip: int = Query(0, ge=0),[m
+[32m+[m[32m    limit: int = Query(100, ge=1, le=1000),[m
+[32m+[m[32m    db: Session = Depends(get_db)[m
+[32m+[m[32m):[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Lista todas as operações de um robô específico.[m
+[32m+[m[32m    """[m
+[32m+[m[32m    # Verificar se o robô existe[m
+[32m+[m[32m    db_robo = crud.get_robo_by_id(db, robo_id=robo_id, schema_name=schema)[m
+[32m+[m[32m    if not db_robo:[m
+[32m+[m[32m        raise HTTPException(status_code=404, detail=f"Robô com ID {robo_id} não encontrado no schema '{schema}'.")[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Listar operações do robô[m
+[32m+[m[32m    operacoes = crud.get_operacoes_by_robo(db, robo_id=robo_id, schema_name=schema, skip=skip, limit=limit)[m
+[32m+[m[32m    return operacoes[m
+[32m+[m
+ # Você pode adicionar endpoints para atualizar ou deletar robôs se necessário no futuro[m
+\ No newline at end of file[m
+[1mdiff --git a/docker-compose.yml b/docker-compose.yml[m
+[1mindex 38583a7..b566c26 100644[m
+[1m--- a/docker-compose.yml[m
+[1m+++ b/docker-compose.yml[m
+[36m@@ -31,6 +31,7 @@[m [mservices:[m
+     restart: unless-stopped[m
+     volumes:[m
+       - postgres_data_rob:/var/lib/postgresql/data # Volume nomeado para persistir os dados do banco[m
+[32m+[m[32m      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql # Script de inicialização automática[m
+     env_file:[m
+       - .env # Carrega variáveis POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB do .env[m
+     ports: [m

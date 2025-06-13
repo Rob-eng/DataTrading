@@ -401,3 +401,181 @@ async def upload_operacoes_csv(
         )
     finally:
         await arquivo_csv.close()
+
+class ExcelOperationProcessor(CSVOperationProcessor):
+    """Processador especializado para operações de Excel"""
+    
+    def __init__(self, df: pd.DataFrame, filename: str, sheet_name: Optional[str] = None):
+        super().__init__(df, filename)
+        self.sheet_name = sheet_name
+    
+    def process_dataframe(self) -> pd.DataFrame:
+        """Processa e limpa o DataFrame do Excel"""
+        logger.info(f"Processando Excel '{self.filename}'. Shape: {self.df.shape}")
+        if self.sheet_name:
+            logger.info(f"Planilha: '{self.sheet_name}'")
+        logger.info(f"Colunas originais: {list(self.df.columns)}")
+        
+        # Remover linhas completamente vazias (comum em Excel)
+        self.df = self.df.dropna(how='all')
+        
+        # Limpar nomes das colunas
+        self.df.columns = self.df.columns.str.strip()
+        
+        # Mapear colunas
+        mapper = ColumnMapper(list(self.df.columns))
+        rename_map = mapper.create_rename_map()
+        
+        if rename_map:
+            self.df.rename(columns=rename_map, inplace=True)
+            logger.info(f"Colunas renomeadas: {rename_map}")
+        
+        logger.info(f"Colunas após mapeamento: {list(self.df.columns)}")
+        logger.info(f"Shape após limpeza: {self.df.shape}")
+        
+        return self.df
+
+@router.post("/excel/", summary="Upload de arquivo Excel de operações")
+async def upload_operacoes_excel(
+    db: Session = Depends(get_db),
+    arquivo_excel: UploadFile = File(..., description="Arquivo Excel contendo as operações (.xlsx ou .xls)"),
+    nome_robo_form: Optional[str] = Form(None, description="Nome do Robô para associar as operações"),
+    sheet_name: Optional[str] = Form(None, description="Nome da planilha (opcional - usa a primeira se não especificado)"),
+    schema: str = Query(settings.DEFAULT_UPLOAD_SCHEMA, description="Schema para salvar os dados")
+):
+    """
+    Faz upload robusto de um arquivo Excel, processa as operações com validação
+    e tratamento de erros avançado, e salva no banco de dados.
+    """
+    filename = arquivo_excel.filename
+    logger.info(f"Iniciando upload de Excel: {filename} (schema: {schema})")
+
+    # Validações iniciais
+    if not filename or not filename.lower().endswith(('.xlsx', '.xls')):
+        raise HTTPException(
+            status_code=400, 
+            detail="Formato de arquivo inválido. Apenas arquivos Excel (.xlsx, .xls) são permitidos."
+        )
+
+    # Determinar nome do robô
+    if nome_robo_form:
+        nome_robo_base = nome_robo_form.strip()
+    else:
+        nome_robo_base = os.path.splitext(filename)[0].strip()
+
+    if not nome_robo_base:
+        raise HTTPException(
+            status_code=400, 
+            detail="Não foi possível determinar o nome do Robô."
+        )
+
+    try:
+        # Verificar/Criar o Robô
+        db_robo = crud.get_robo_by_nome(db, nome=nome_robo_base, schema_name=schema)
+        if not db_robo:
+            logger.info(f"Criando novo robô '{nome_robo_base}' no schema '{schema}'")
+            robo_schema_in = schemas.RoboCreate(nome=nome_robo_base)
+            db_robo = crud.create_robo(db=db, robo_in=robo_schema_in, schema_name=schema)
+        else:
+            logger.info(f"Usando robô existente: '{db_robo.nome}' (ID: {db_robo.id})")
+
+        # Ler e processar Excel
+        contents = await arquivo_excel.read()
+        buffer = io.BytesIO(contents)
+
+        try:
+            # Detectar extensão e usar engine apropriado
+            if filename.lower().endswith('.xlsx'):
+                engine = 'openpyxl'
+            else:  # .xls
+                engine = 'xlrd'
+            
+            # Primeiro, ler as planilhas disponíveis
+            excel_file = pd.ExcelFile(buffer, engine=engine)
+            available_sheets = excel_file.sheet_names
+            logger.info(f"Planilhas disponíveis: {available_sheets}")
+            
+            # Determinar qual planilha usar
+            target_sheet = sheet_name if sheet_name else available_sheets[0]
+            if target_sheet not in available_sheets:
+                raise CSVProcessingError(
+                    f"Planilha '{target_sheet}' não encontrada. "
+                    f"Disponíveis: {available_sheets}"
+                )
+            
+            logger.info(f"Usando planilha: '{target_sheet}'")
+            
+            # Ler a planilha específica
+            df = pd.read_excel(
+                buffer,
+                sheet_name=target_sheet,
+                skiprows=settings.EXCEL_SKIPROWS,
+                header=settings.EXCEL_HEADER,
+                engine=engine
+            )
+            
+        except Exception as e:
+            raise CSVProcessingError(f"Erro ao ler Excel: {e}")
+        finally:
+            buffer.close()
+
+        if df.empty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Arquivo Excel '{filename}' está vazio ou não contém dados válidos."
+            )
+
+        # Processar DataFrame
+        processor = ExcelOperationProcessor(df, filename, target_sheet)
+        df_processed = processor.process_dataframe()
+
+        # Processar cada linha (reutiliza a lógica do CSV)
+        operacoes_salvas = 0
+        for index, row in df_processed.iterrows():
+            operacao_data = processor.process_single_row(index, row)
+            
+            if operacao_data:
+                try:
+                    crud.create_operacao(
+                        db=db, 
+                        operacao_in=operacao_data, 
+                        robo_id_for_op=db_robo.id, 
+                        schema_name=schema
+                    )
+                    operacoes_salvas += 1
+                except Exception as e:
+                    processor._add_error(index, f"Erro ao salvar no banco: {e}")
+
+        # Preparar resposta
+        summary = processor.get_processing_summary()
+        
+        response_data = {
+            "message": f"Processamento concluído para '{filename}'",
+            "robo_nome": db_robo.nome,
+            "robo_id": db_robo.id,
+            "schema": schema,
+            "planilha_usada": target_sheet,
+            "planilhas_disponiveis": available_sheets,
+            "operacoes_salvas": operacoes_salvas,
+            "resumo": summary
+        }
+
+        # Log do resultado
+        logger.info(
+            f"Excel '{filename}' processado: {operacoes_salvas} operações salvas, "
+            f"{summary['erros']} erros de {summary['total_linhas']} linhas"
+        )
+
+        return response_data
+
+    except CSVProcessingError as e:
+        logger.error(f"Erro de processamento Excel '{filename}': {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Erro interno ao processar Excel '{filename}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Erro interno ao processar arquivo Excel: {str(e)}"
+        )
+    finally:
+        await arquivo_excel.close()

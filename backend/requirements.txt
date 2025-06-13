@@ -8,8 +8,11 @@ python-dotenv==1.0.1
 pandas==2.2.2      # Ainda útil para manipulação de dados
 numpy==1.26.4
 
-# Se você planeja gerar PDFs/Excel diretamente do backend no futuro (para relatórios não interativos):
+# Dependências para processamento de Excel
+openpyxl==3.1.2         # Para ler/escrever arquivos Excel (.xlsx)
+xlrd==2.0.1             # Para suporte a arquivos Excel antigos (.xls)
+
+# Para relatórios futuros (PDFs/Excel/gráficos):
 # reportlab==4.2.0
-# openpyxl==3.1.2
 # matplotlib==3.8.4
 # seaborn==0.13.2

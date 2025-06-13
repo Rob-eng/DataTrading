@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     CSV_SEPARATOR: str = ";"
     CSV_HEADER: int = 0
     
+    # Configurações de parsing do Excel
+    EXCEL_SKIPROWS: int = 0
+    EXCEL_HEADER: int = 0
+    EXCEL_SHEET_NAME: Optional[str] = None  # None = primeira planilha
+    
     # Schema padrão para uploads
     DEFAULT_UPLOAD_SCHEMA: str = "uploads_usuarios"
 
