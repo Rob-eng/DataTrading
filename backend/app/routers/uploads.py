@@ -1,27 +1,16 @@
 import logging
 import os
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+import re
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple, Any
 import pandas as pd
-import io # Para ler o UploadFile como um buffer
+import io
+from decimal import Decimal, InvalidOperation
 
-from .. import crud, models, schemas # Ajuste para .. se estiver em routers/
+from .. import crud, models, schemas
 from ..database import get_db
-# Precisaremos adaptar a lógica de processamento de CSV
-# Por enquanto, vamos focar na estrutura do endpoint
 from ..core.config import settings
-#from ..core.config import ( # Importar configurações do CSV
-    #CSV_SKIPROWS, CSV_ENCODING, CSV_SEPARATOR, CSV_HEADER,
-    #RESULT_COLUMN_NAME, PRIMARY_RESULT_COLUMN_CSV, FALLBACK_RESULT_COLUMNS_CSV,
-    #ROBO_COLUMN_NAME
-#)
-# Importar funções de limpeza (vamos precisar delas ou de uma versão adaptada)
-# Supondo que elas serão adaptadas para não dependerem mais de um 'input_format'
-# ou que podemos passar 'csv' para _clean_numeric_result_column.
-# Por simplicidade, vamos reimplementar partes da lógica aqui ou chamar funções
-# que não dependam de um 'input_format' complexo por enquanto.
-# No futuro, podemos refatorar _clean_numeric_result_column para ser mais genérica.
 
 logger = logging.getLogger(__name__)
 
@@ -31,207 +20,384 @@ router = APIRouter(
     responses={404: {"description": "Não encontrado"}},
 )
 
-# --- ADAPTAR ESTA LÓGICA DE LIMPEZA OU USAR UMA FUNÇÃO UTILITÁRIA ---
-# Esta é uma versão simplificada da sua _clean_numeric_result_column
-# focada em inteiros, como discutido.
-def clean_csv_decimal_string(value_str: str) -> Optional[float]:
-    if pd.isna(value_str): return None
-    cleaned = str(value_str).strip().replace(' ', '').replace('.', '').replace(',', '.')
-    if not cleaned: return None
-    try:
-        return float(cleaned)
-    except ValueError:
-        logger.warning(f"Falha ao converter CSV decimal '{value_str}' (limpo: '{cleaned}')")
+class CSVProcessingError(Exception):
+    """Exceção customizada para erros de processamento de CSV"""
+    pass
+
+class NumericCleaningUtility:
+    """Utilitário para limpeza de valores numéricos com diferentes formatos"""
+    
+    @staticmethod
+    def clean_decimal_string(value: Any, allow_comma_as_decimal: bool = True) -> Optional[float]:
+        """
+        Limpa e converte string numérica para float, tratando vírgulas como decimais.
+        
+        Args:
+            value: Valor a ser convertido
+            allow_comma_as_decimal: Se True, trata vírgula como separador decimal
+            
+        Returns:
+            float ou None se conversão falhar
+        """
+        if pd.isna(value) or value is None:
+            return None
+            
+        # Converte para string e remove espaços
+        str_value = str(value).strip()
+        if not str_value or str_value.lower() in ['nan', 'null', '']:
+            return None
+        
+        try:
+            # Remove caracteres não numéricos exceto pontos, vírgulas e sinais
+            # Mantém apenas: números, pontos, vírgulas, + e -
+            cleaned = re.sub(r'[^\d.,+-]', '', str_value)
+            
+            if not cleaned:
+                return None
+            
+            # Lida com diferentes formatos numéricos
+            if allow_comma_as_decimal:
+                # Se tem vírgula e ponto, assume formato brasileiro: 1.234,56
+                if ',' in cleaned and '.' in cleaned:
+                    # Remove pontos (separadores de milhares) e substitui vírgula por ponto
+                    cleaned = cleaned.replace('.', '').replace(',', '.')
+                # Se tem apenas vírgula, assume como decimal: 123,45
+                elif ',' in cleaned and '.' not in cleaned:
+                    cleaned = cleaned.replace(',', '.')
+                # Se tem apenas ponto, mantém: 123.45
+                # (não precisa fazer nada)
+            
+            return float(cleaned)
+            
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Falha ao converter valor numérico '{str_value}': {e}")
+            return None
+
+class ColumnMapper:
+    """Utilitário para mapeamento inteligente de colunas do CSV"""
+    
+    def __init__(self, df_columns: List[str]):
+        self.df_columns = df_columns
+        self.columns_lower_map = {col.lower().strip(): col for col in df_columns}
+    
+    def find_column(self, target_columns: List[str], required: bool = False) -> Optional[str]:
+        """
+        Encontra uma coluna no DataFrame usando busca case-insensitive.
+        
+        Args:
+            target_columns: Lista de nomes possíveis para a coluna
+            required: Se True, levanta exceção se coluna não for encontrada
+            
+        Returns:
+            Nome da coluna encontrada ou None
+        """
+        for target_col in target_columns:
+            target_lower = target_col.lower().strip()
+            if target_lower in self.columns_lower_map:
+                found_col = self.columns_lower_map[target_lower]
+                logger.debug(f"Coluna mapeada: '{target_col}' -> '{found_col}'")
+                return found_col
+        
+        if required:
+            raise CSVProcessingError(
+                f"Coluna obrigatória não encontrada. Procurado: {target_columns}. "
+                f"Disponíveis: {self.df_columns}"
+            )
+        
         return None
-# -------------------------------------------------------------------------
+    
+    def create_rename_map(self) -> Dict[str, str]:
+        """Cria mapa de renomeação para padronizar nomes das colunas"""
+        rename_map = {}
+        
+        # Mapear coluna de abertura
+        open_col = self.find_column(settings.OPEN_TIME_COLUMNS, required=True)
+        if open_col != 'Abertura':
+            rename_map[open_col] = 'Abertura'
+        
+        # Mapear coluna de fechamento (opcional)
+        close_col = self.find_column(settings.CLOSE_TIME_COLUMNS, required=False)
+        if close_col and close_col != 'Fechamento':
+            rename_map[close_col] = 'Fechamento'
+        
+        # Mapear coluna de resultado
+        result_col = self.find_column(
+            [settings.PRIMARY_RESULT_COLUMN_CSV] + settings.FALLBACK_RESULT_COLUMNS_CSV,
+            required=True
+        )
+        if result_col != settings.RESULT_COLUMN_NAME:
+            rename_map[result_col] = settings.RESULT_COLUMN_NAME
+        
+        # Mapear outras colunas opcionais
+        ativo_col = self.find_column(settings.ATIVO_COLUMNS, required=False)
+        if ativo_col and ativo_col != 'Ativo':
+            rename_map[ativo_col] = 'Ativo'
+        
+        lotes_col = self.find_column(settings.LOTES_COLUMNS, required=False)
+        if lotes_col and lotes_col != 'Lotes':
+            rename_map[lotes_col] = 'Lotes'
+        
+        tipo_col = self.find_column(settings.TIPO_COLUMNS, required=False)
+        if tipo_col and tipo_col != 'Tipo':
+            rename_map[tipo_col] = 'Tipo'
+        
+        return rename_map
 
+class CSVOperationProcessor:
+    """Processador principal para operações de CSV"""
+    
+    def __init__(self, df: pd.DataFrame, filename: str):
+        self.df = df
+        self.filename = filename
+        self.numeric_cleaner = NumericCleaningUtility()
+        self.processed_count = 0
+        self.error_count = 0
+        self.errors = []
+    
+    def process_dataframe(self) -> pd.DataFrame:
+        """Processa e limpa o DataFrame completo"""
+        logger.info(f"Processando CSV '{self.filename}'. Shape: {self.df.shape}")
+        logger.info(f"Colunas originais: {list(self.df.columns)}")
+        
+        # Limpar nomes das colunas
+        self.df.columns = self.df.columns.str.strip()
+        
+        # Mapear colunas
+        mapper = ColumnMapper(list(self.df.columns))
+        rename_map = mapper.create_rename_map()
+        
+        if rename_map:
+            self.df.rename(columns=rename_map, inplace=True)
+            logger.info(f"Colunas renomeadas: {rename_map}")
+        
+        logger.info(f"Colunas após mapeamento: {list(self.df.columns)}")
+        
+        return self.df
+    
+    def process_single_row(self, index: int, row: pd.Series) -> Optional[schemas.OperacaoCreate]:
+        """
+        Processa uma única linha do CSV.
+        
+        Returns:
+            OperacaoCreate se linha válida, None se deve ser ignorada
+        """
+        try:
+            # Validar campos obrigatórios
+            data_abertura_raw = row.get('Abertura')
+            resultado_raw = row.get(settings.RESULT_COLUMN_NAME)
+            
+            if pd.isna(data_abertura_raw) or pd.isna(resultado_raw):
+                self._add_error(index, "Campos obrigatórios ausentes (Abertura ou Resultado)")
+                return None
+            
+            # Converter data de abertura
+            try:
+                data_abertura = pd.to_datetime(data_abertura_raw, dayfirst=True, errors='raise')
+            except Exception as e:
+                self._add_error(index, f"Data abertura inválida '{data_abertura_raw}': {e}")
+                return None
+            
+            # Converter data de fechamento (opcional)
+            data_fechamento = None
+            fechamento_raw = row.get('Fechamento')
+            if pd.notna(fechamento_raw):
+                try:
+                    data_fechamento = pd.to_datetime(fechamento_raw, dayfirst=True, errors='raise')
+                except Exception as e:
+                    self._add_error(index, f"Data fechamento inválida '{fechamento_raw}': {e}", level='warning')
+                    # Continua processamento mesmo com erro no fechamento
+            
+            # Converter resultado
+            resultado = self.numeric_cleaner.clean_decimal_string(resultado_raw)
+            if resultado is None:
+                self._add_error(index, f"Resultado inválido '{resultado_raw}'")
+                return None
+            
+            # Processar campos opcionais
+            ativo = self._clean_string_field(row.get('Ativo'))
+            lotes = self.numeric_cleaner.clean_decimal_string(row.get('Lotes'))
+            tipo_operacao = self._parse_operation_type(row.get('Tipo'))
+            
+            # Criar schema da operação
+            operacao_data = schemas.OperacaoCreate(
+                resultado=resultado,
+                data_abertura=data_abertura,
+                data_fechamento=data_fechamento,
+                ativo=ativo,
+                lotes=lotes,
+                tipo=tipo_operacao
+            )
+            
+            self.processed_count += 1
+            return operacao_data
+            
+        except Exception as e:
+            self._add_error(index, f"Erro inesperado: {e}")
+            return None
+    
+    def _add_error(self, index: int, message: str, level: str = 'error'):
+        """Adiciona erro à lista de erros com contexto"""
+        line_num = index + settings.CSV_SKIPROWS + 2  # +2 para linha real do arquivo
+        error_entry = {
+            'linha': line_num,
+            'erro': message,
+            'nivel': level
+        }
+        self.errors.append(error_entry)
+        
+        if level == 'error':
+            self.error_count += 1
+            logger.warning(f"Linha {line_num}: {message}")
+        else:
+            logger.info(f"Linha {line_num}: {message}")
+    
+    def _clean_string_field(self, value: Any) -> Optional[str]:
+        """Limpa campo de string"""
+        if pd.isna(value) or value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned if cleaned else None
+    
+    def _parse_operation_type(self, value: Any) -> schemas.TipoOperacaoEnum:
+        """Converte string para enum de tipo de operação"""
+        if pd.isna(value) or value is None:
+            return schemas.TipoOperacaoEnum.DESCONHECIDO
+        
+        value_str = str(value).upper().strip()
+        
+        # Mapeamentos flexíveis
+        if any(keyword in value_str for keyword in ['COMPRA', 'BUY', 'C']):
+            return schemas.TipoOperacaoEnum.COMPRA
+        elif any(keyword in value_str for keyword in ['VENDA', 'SELL', 'V']):
+            return schemas.TipoOperacaoEnum.VENDA
+        
+        return schemas.TipoOperacaoEnum.DESCONHECIDO
+    
+    def get_processing_summary(self) -> Dict[str, Any]:
+        """Retorna resumo do processamento"""
+        return {
+            'processadas': self.processed_count,
+            'erros': self.error_count,
+            'total_linhas': len(self.df),
+            'detalhes_erros': self.errors[-10:] if self.errors else []  # Últimos 10 erros
+        }
 
-@router.post("/csv/", summary="Upload de arquivo CSV de operações para um Robô")
+@router.post("/csv/", summary="Upload de arquivo CSV de operações")
 async def upload_operacoes_csv(
     db: Session = Depends(get_db),
-    # Para um único arquivo CSV, o nome do robô pode vir do nome do arquivo ou de um campo de formulário.
-    # Vamos começar com o nome do robô vindo do nome do arquivo.
-    # Se quisermos que o usuário escolha/crie, adicionaremos um campo de formulário.
     arquivo_csv: UploadFile = File(..., description="Arquivo CSV contendo as operações"),
-    # Opcional: Permitir que o usuário especifique o nome do robô via formulário
-    nome_robo_form: Optional[str] = Form(None, description="Nome do Robô para associar as operações. Se não fornecido, será usado o nome do arquivo.")
+    nome_robo_form: Optional[str] = Form(None, description="Nome do Robô para associar as operações"),
+    schema: str = Query(settings.DEFAULT_UPLOAD_SCHEMA, description="Schema para salvar os dados")
 ):
     """
-    Faz upload de um arquivo CSV, processa as operações e as salva no banco de dados,
-    associando-as a um Robô (criando o Robô se não existir, baseado no nome do arquivo ou no formulário).
+    Faz upload robusto de um arquivo CSV, processa as operações com validação
+    e tratamento de erros avançado, e salva no banco de dados.
     """
     filename = arquivo_csv.filename
-    logger.info(f"Recebido upload de CSV: {filename}")
+    logger.info(f"Iniciando upload de CSV: {filename} (schema: {schema})")
 
-    if not filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Formato de arquivo inválido. Apenas CSV é permitido.")
+    # Validações iniciais
+    if not filename or not filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=400, 
+            detail="Formato de arquivo inválido. Apenas arquivos CSV são permitidos."
+        )
 
-    # Determina o nome do Robô
+    # Determinar nome do robô
     if nome_robo_form:
         nome_robo_base = nome_robo_form.strip()
     else:
-        nome_robo_base = os.path.splitext(filename)[0].strip() # Remove extensão .csv
+        nome_robo_base = os.path.splitext(filename)[0].strip()
 
     if not nome_robo_base:
-        raise HTTPException(status_code=400, detail="Não foi possível determinar o nome do Robô a partir do nome do arquivo ou do formulário.")
-
-    # Verifica/Cria o Robô
-    db_robo = crud.get_robo_by_nome(db, nome=nome_robo_base)
-    if not db_robo:
-        logger.info(f"Robô '{nome_robo_base}' não encontrado. Criando novo robô...")
-        robo_schema_in = schemas.RoboCreate(nome=nome_robo_base)
-        db_robo = crud.create_robo(db=db, robo_in=robo_schema_in)
-        logger.info(f"Robô '{db_robo.nome}' criado com ID: {db_robo.id}")
-    else:
-        logger.info(f"Usando robô existente: '{db_robo.nome}' (ID: {db_robo.id})")
-
-    robo_id_final = db_robo.id
-    operacoes_criadas_count = 0
-    operacoes_falhadas_count = 0
-    linhas_processadas = 0
+        raise HTTPException(
+            status_code=400, 
+            detail="Não foi possível determinar o nome do Robô."
+        )
 
     try:
-        # Lê o conteúdo do UploadFile para um buffer na memória
+        # Verificar/Criar o Robô
+        db_robo = crud.get_robo_by_nome(db, nome=nome_robo_base, schema_name=schema)
+        if not db_robo:
+            logger.info(f"Criando novo robô '{nome_robo_base}' no schema '{schema}'")
+            robo_schema_in = schemas.RoboCreate(nome=nome_robo_base)
+            db_robo = crud.create_robo(db=db, robo_in=robo_schema_in, schema_name=schema)
+        else:
+            logger.info(f"Usando robô existente: '{db_robo.nome}' (ID: {db_robo.id})")
+
+        # Ler e processar CSV
         contents = await arquivo_csv.read()
-        buffer = io.BytesIO(contents) # Para pandas ler como se fosse um arquivo
+        buffer = io.BytesIO(contents)
 
-        # Processa o CSV com Pandas
-        df = pd.read_csv(
-            buffer,
-            skiprows=settings.CSV_SKIPROWS,
-            encoding=settings.CSV_ENCODING,
-            sep=settings.CSV_SEPARATOR,
-            header=settings.CSV_HEADER,
-            low_memory=False,
-        )
-        
-        buffer.close() # Fecha o buffer
+        try:
+            df = pd.read_csv(
+                buffer,
+                skiprows=settings.CSV_SKIPROWS,
+                encoding=settings.CSV_ENCODING,
+                sep=settings.CSV_SEPARATOR,
+                header=settings.CSV_HEADER,
+                low_memory=False,
+            )
+        except Exception as e:
+            raise CSVProcessingError(f"Erro ao ler CSV: {e}")
+        finally:
+            buffer.close()
 
-        logger.info(f"CSV '{filename}' lido. Shape inicial: {df.shape}. Colunas: {list(df.columns)}")
+        if df.empty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Arquivo CSV '{filename}' está vazio ou não contém dados válidos."
+            )
 
-        # Renomear colunas importantes (simplificado - adaptar do seu data_processor)
-        # Esta parte precisa ser robusta como no seu _parse_datetime_columns e _find_and_rename_result_column
-        # Por agora, vamos assumir nomes fixos para simplificar
-        df.columns = df.columns.str.strip() # Limpa espaços nos nomes das colunas
+        # Processar DataFrame
+        processor = CSVOperationProcessor(df, filename)
+        df_processed = processor.process_dataframe()
 
-        rename_map = {}
-        # Mapeamento de Data/Hora (exemplo simplificado)
-        if 'Data Abertura' in df.columns: rename_map['Data Abertura'] = 'Abertura'
-        elif 'Open Time' in df.columns: rename_map['Open Time'] = 'Abertura'
-        # Adicione mais mapeamentos se 'Abertura' tiver outros nomes possíveis
-        elif 'Abertura' in df.columns: pass # Já está correto
-        else: logger.warning(f"Coluna de Abertura não encontrada em {filename}")
-
-        if 'Data Fechamento' in df.columns: rename_map['Data Fechamento'] = 'Fechamento'
-        elif 'Close Time' in df.columns: rename_map['Close Time'] = 'Fechamento'
-        elif 'Fechamento' in df.columns: pass
-        else: logger.warning(f"Coluna de Fechamento não encontrada em {filename}")
-
-        # Mapeamento de Resultado (exemplo simplificado)
-        coluna_resultado_original = None
-        # Verifica a coluna primária primeiro (case-insensitive, usando o nome original)
-        df_cols_lower_map_uploads = {col.lower(): col for col in df.columns} # Mapa para busca case-insensitive
-
-        if settings.PRIMARY_RESULT_COLUMN_CSV.lower() in df_cols_lower_map_uploads:
-            coluna_resultado_original = df_cols_lower_map_uploads[settings.PRIMARY_RESULT_COLUMN_CSV.lower()]
-        else:
-            for col_fallback in FALLBACK_RESULT_COLUMNS_CSV:
-                if col_fallback.lower() in df_cols_lower_map_uploads:
-                    coluna_resultado_original = df_cols_lower_map_uploads[col_fallback.lower()]
-                    logger.info(f"Usando coluna de resultado fallback: '{coluna_resultado_original}' para CSV.")
-                    break
-        
-        if coluna_resultado_original:
-            rename_map[coluna_resultado_original] = settings.RESULT_COLUMN_NAME # Renomeia para o nome padrão
-        else:
-            logger.error(f"Coluna de resultado CRÍTICA não encontrada no CSV '{filename}'.")
-            raise HTTPException(status_code=400, detail=f"Coluna de resultado não encontrada no CSV '{filename}'.")
-
-        df.rename(columns=rename_map, inplace=True)
-        logger.info(f"Colunas após rename tentativo: {list(df.columns)}")
-
-        # Processar cada linha do DataFrame
-        for index, row in df.iterrows():
-            linhas_processadas += 1
-            try:
-                # Extrair e validar dados da linha
-                data_abertura_str = row.get('Abertura')
-                resultado_str = row.get(settings.RESULT_COLUMN_NAME) # Usa o nome já renomeado
-
-                if pd.isna(data_abertura_str) or pd.isna(resultado_str):
-                    logger.warning(f"Linha {index+settings.CSV_SKIPROWS+1} no CSV '{filename}' ignorada: Data de Abertura ou Resultado ausente.")
-                    operacoes_falhadas_count += 1
-                    continue
-
-                # Converter data/hora
+        # Processar cada linha
+        operacoes_salvas = 0
+        for index, row in df_processed.iterrows():
+            operacao_data = processor.process_single_row(index, row)
+            
+            if operacao_data:
                 try:
-                    data_abertura_dt = pd.to_datetime(data_abertura_str, dayfirst=True, errors='raise')
-                except Exception as e_dt_abertura:
-                    logger.warning(f"Linha {index+settings.CSV_SKIPROWS+1}: Falha ao converter Data Abertura '{data_abertura_str}': {e_dt_abertura}")
-                    operacoes_falhadas_count += 1
-                    continue
+                    crud.create_operacao(
+                        db=db, 
+                        operacao_in=operacao_data, 
+                        robo_id_for_op=db_robo.id, 
+                        schema_name=schema
+                    )
+                    operacoes_salvas += 1
+                except Exception as e:
+                    processor._add_error(index, f"Erro ao salvar no banco: {e}")
 
-                data_fechamento_dt = None
-                if 'Fechamento' in row and pd.notna(row['Fechamento']):
-                    try:
-                        data_fechamento_dt = pd.to_datetime(row['Fechamento'], dayfirst=True, errors='raise')
-                    except Exception as e_dt_fechamento:
-                        logger.warning(f"Linha {index+settings.CSV_SKIPROWS+1}: Falha ao converter Data Fechamento '{row['Fechamento']}': {e_dt_fechamento}. Definindo como None.")
-                        # data_fechamento_dt permanece None
+        # Preparar resposta
+        summary = processor.get_processing_summary()
+        
+        response_data = {
+            "message": f"Processamento concluído para '{filename}'",
+            "robo_nome": db_robo.nome,
+            "robo_id": db_robo.id,
+            "schema": schema,
+            "operacoes_salvas": operacoes_salvas,
+            "resumo": summary
+        }
 
-                # Limpar resultado (assumindo que são inteiros)
-                resultado_limpo = clean_csv_decimal_string(str(resultado_str))
-                if resultado_limpo is None:
-                    logger.warning(f"Linha {index+settings.CSV_SKIPROWS+1}: Resultado '{resultado_str}' não pôde ser convertido para número.")
-                    operacoes_falhadas_count += 1
-                    continue
-                
-                # --- AJUSTE AQUI OS NOMES DAS COLUNAS DO SEU CSV ---
-                # Ex: Se no CSV a coluna de ativo é 'Papel' e quantidade é 'Quant.'
-                ativo_csv = row.get('Ativo') # Ou 'Papel', etc.
-                lotes_csv_str = str(row.get('Qtd.')) if 'Qtd.' in row else None # Ou 'Quantidade', etc.
-                tipo_csv_str = str(row.get('Tipo')).upper() if 'Tipo' in row and pd.notna(row['Tipo']) else None # Ou 'Operação', etc.
-                # ---------------------------------------------------
+        # Log do resultado
+        logger.info(
+            f"CSV '{filename}' processado: {operacoes_salvas} operações salvas, "
+            f"{summary['erros']} erros de {summary['total_linhas']} linhas"
+        )
 
-                lotes_limpo = clean_csv_decimal_string(lotes_csv_str) if lotes_csv_str else None
-                
-                tipo_operacao_enum = schemas.TipoOperacaoEnum.DESCONHECIDO
-                if tipo_csv_str:
-                    if tipo_csv_str == "COMPRA" or tipo_csv_str.startswith("C"): # Mais flexível
-                        tipo_operacao_enum = schemas.TipoOperacaoEnum.COMPRA
-                    elif tipo_csv_str == "VENDA" or tipo_csv_str.startswith("V"):
-                        tipo_operacao_enum = schemas.TipoOperacaoEnum.VENDA
+        return response_data
 
-                # Criar schema da operação
-                operacao_data = schemas.OperacaoCreate(
-                    resultado=resultado_limpo,
-                    data_abertura=data_abertura_dt,
-                    data_fechamento=data_fechamento_dt,
-                    ativo=ativo_csv,
-                    lotes=lotes_limpo,
-                    tipo=tipo_operacao_enum
-                    # nome_robo_para_criacao e robo_id não são definidos aqui diretamente,
-                    # pois já temos robo_id_final. O schema OperacaoCreate os tem como opcionais.
-                )
-
-                # Salvar no banco
-                crud.create_operacao(db=db, operacao_in=operacao_data, robo_id_for_op=robo_id_final)
-                operacoes_criadas_count += 1
-
-            except Exception as e_row:
-                logger.error(f"Erro ao processar linha {index+settings.CSV_SKIPROWS+1} do CSV '{filename}': {e_row}", exc_info=False) # exc_info=False para não poluir muito
-                operacoes_falhadas_count += 1
-                continue
-
-        msg = f"Arquivo '{filename}' processado. {operacoes_criadas_count} operações salvas, {operacoes_falhadas_count} falharam de {linhas_processadas} linhas lidas (após skip)."
-        logger.info(msg)
-        return {"message": msg, "robo_nome": db_robo.nome, "robo_id": robo_id_final, "criadas": operacoes_criadas_count, "falhas": operacoes_falhadas_count}
-
-    except pd.errors.EmptyDataError:
-        logger.warning(f"Arquivo CSV '{filename}' está vazio ou não contém dados após pular linhas.")
-        raise HTTPException(status_code=400, detail=f"Arquivo CSV '{filename}' vazio ou inválido.")
+    except CSVProcessingError as e:
+        logger.error(f"Erro de processamento CSV '{filename}': {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Erro geral ao processar arquivo CSV '{filename}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Erro interno ao processar o arquivo CSV: {str(e)}")
+        logger.error(f"Erro interno ao processar '{filename}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Erro interno ao processar arquivo CSV: {str(e)}"
+        )
     finally:
-        await arquivo_csv.close() # Importante fechar o arquivo
+        await arquivo_csv.close()

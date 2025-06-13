@@ -70,18 +70,29 @@ class Settings(BaseSettings):
         return values
 
 
-    # Constantes de processamento (como antes)
+    # Constantes de processamento CSV
     RESULT_COLUMN_NAME: str = "Resultado_Valor"
-    # ... (resto das constantes) ...
     PRIMARY_RESULT_COLUMN_CSV: str = "Res. Operação (%)"
-    FALLBACK_RESULT_COLUMNS_CSV: List[str] = ["Res. Operação", "Resultado", "Profit"]
-    OPEN_TIME_COLUMNS: List[str] = ["Abertura", "Data Abertura", "Open Time"]
-    CLOSE_TIME_COLUMNS: List[str] = ["Fechamento", "Data Fechamento", "Close Time"]
+    FALLBACK_RESULT_COLUMNS_CSV: List[str] = ["Res. Operação", "Resultado", "Profit", "Result"]
+    
+    # Colunas de data/hora
+    OPEN_TIME_COLUMNS: List[str] = ["Abertura", "Data Abertura", "Open Time", "Data de Abertura"]
+    CLOSE_TIME_COLUMNS: List[str] = ["Fechamento", "Data Fechamento", "Close Time", "Data de Fechamento"]
+    
+    # Outras colunas
+    ATIVO_COLUMNS: List[str] = ["Ativo", "Papel", "Symbol", "Instrumento"]
+    LOTES_COLUMNS: List[str] = ["Qtd.", "Quantidade", "Lotes", "Quantity", "Volume"]
+    TIPO_COLUMNS: List[str] = ["Tipo", "Operação", "Side", "Direction"]
     ROBO_COLUMN_NAME: str = "Robo"
+    
+    # Configurações de parsing do CSV
     CSV_SKIPROWS: int = 5
     CSV_ENCODING: str = "latin-1"
     CSV_SEPARATOR: str = ";"
     CSV_HEADER: int = 0
+    
+    # Schema padrão para uploads
+    DEFAULT_UPLOAD_SCHEMA: str = "uploads_usuarios"
 
 
     model_config = SettingsConfigDict(

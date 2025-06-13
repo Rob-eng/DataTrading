@@ -33,7 +33,8 @@ services:
       - postgres_data_rob:/var/lib/postgresql/data # Volume nomeado para persistir os dados do banco
     env_file:
       - .env # Carrega variáveis POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB do .env
-    ports: - "5433:5432"
+    ports: 
+      - "5433:5432"
     networks:
       - app_network
     healthcheck: # Verifica se o PostgreSQL está pronto para aceitar conexões
