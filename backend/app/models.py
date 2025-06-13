@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, Enum as DBEnum,
 from sqlalchemy.orm import relationship # Renomeado para DBEnum para evitar conflito
 from sqlalchemy.sql import func # Para valores padrão como data/hora atual
 import enum # Módulo enum padrão do Python
-
+from typing import Optional
 from .database import Base # Importa a classe Base que criamos
 
 class Robo(Base):
