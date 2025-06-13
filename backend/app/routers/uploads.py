@@ -141,6 +141,11 @@ class ColumnMapper:
         if tipo_col and tipo_col != 'Tipo':
             rename_map[tipo_col] = 'Tipo'
         
+        # Mapear coluna de robô (para Excel com múltiplos robôs)
+        robo_col = self.find_column(settings.ROBO_COLUMNS, required=False)
+        if robo_col and robo_col != settings.ROBO_COLUMN_NAME:
+            rename_map[robo_col] = settings.ROBO_COLUMN_NAME
+        
         return rename_map
 
 class CSVOperationProcessor:
@@ -439,8 +444,9 @@ class ExcelOperationProcessor(CSVOperationProcessor):
 async def upload_operacoes_excel(
     db: Session = Depends(get_db),
     arquivo_excel: UploadFile = File(..., description="Arquivo Excel contendo as operações (.xlsx ou .xls)"),
-    nome_robo_form: Optional[str] = Form(None, description="Nome do Robô para associar as operações"),
+    nome_robo_form: Optional[str] = Form(None, description="Nome do Robô único (se arquivo contém apenas um robô)"),
     sheet_name: Optional[str] = Form(None, description="Nome da planilha (opcional - usa a primeira se não especificado)"),
+    processar_multiplos_robos: bool = Form(True, description="Se True, detecta automaticamente múltiplos robôs na coluna Robo"),
     schema: str = Query(settings.DEFAULT_UPLOAD_SCHEMA, description="Schema para salvar os dados")
 ):
     """
@@ -470,15 +476,6 @@ async def upload_operacoes_excel(
         )
 
     try:
-        # Verificar/Criar o Robô
-        db_robo = crud.get_robo_by_nome(db, nome=nome_robo_base, schema_name=schema)
-        if not db_robo:
-            logger.info(f"Criando novo robô '{nome_robo_base}' no schema '{schema}'")
-            robo_schema_in = schemas.RoboCreate(nome=nome_robo_base)
-            db_robo = crud.create_robo(db=db, robo_in=robo_schema_in, schema_name=schema)
-        else:
-            logger.info(f"Usando robô existente: '{db_robo.nome}' (ID: {db_robo.id})")
-
         # Ler e processar Excel
         contents = await arquivo_excel.read()
         buffer = io.BytesIO(contents)
@@ -529,34 +526,103 @@ async def upload_operacoes_excel(
         processor = ExcelOperationProcessor(df, filename, target_sheet)
         df_processed = processor.process_dataframe()
 
-        # Processar cada linha (reutiliza a lógica do CSV)
+        # Detectar se deve processar múltiplos robôs
         operacoes_salvas = 0
-        for index, row in df_processed.iterrows():
-            operacao_data = processor.process_single_row(index, row)
+        robos_processados = {}
+        
+        if processar_multiplos_robos and settings.ROBO_COLUMN_NAME in df_processed.columns:
+            logger.info(f"Detectada coluna '{settings.ROBO_COLUMN_NAME}' - processando múltiplos robôs automaticamente")
             
-            if operacao_data:
-                try:
-                    crud.create_operacao(
-                        db=db, 
-                        operacao_in=operacao_data, 
-                        robo_id_for_op=db_robo.id, 
-                        schema_name=schema
-                    )
-                    operacoes_salvas += 1
-                except Exception as e:
-                    processor._add_error(index, f"Erro ao salvar no banco: {e}")
+            # Agrupar por nome do robô
+            df_processed['RoboNome'] = df_processed[settings.ROBO_COLUMN_NAME].astype(str).str.strip()
+            robos_unicos = df_processed['RoboNome'].dropna().unique()
+            
+            logger.info(f"Robôs detectados: {list(robos_unicos)}")
+            
+            for nome_robo in robos_unicos:
+                if not nome_robo or nome_robo.lower() in ['nan', 'none', '']:
+                    continue
+                    
+                # Buscar/criar robô
+                db_robo_atual = crud.get_robo_by_nome(db, nome=nome_robo, schema_name=schema)
+                if not db_robo_atual:
+                    logger.info(f"Criando novo robô '{nome_robo}' no schema '{schema}'")
+                    robo_schema_in = schemas.RoboCreate(nome=nome_robo)
+                    db_robo_atual = crud.create_robo(db=db, robo_in=robo_schema_in, schema_name=schema)
+                else:
+                    logger.info(f"Usando robô existente: '{db_robo_atual.nome}' (ID: {db_robo_atual.id})")
+                
+                robos_processados[nome_robo] = {
+                    'robo_id': db_robo_atual.id,
+                    'operacoes_salvas': 0,
+                    'erros': 0
+                }
+                
+                # Filtrar operações deste robô
+                df_robo = df_processed[df_processed['RoboNome'] == nome_robo]
+                
+                # Processar operações do robô atual
+                for index, row in df_robo.iterrows():
+                    operacao_data = processor.process_single_row(index, row)
+                    
+                    if operacao_data:
+                        try:
+                            crud.create_operacao(
+                                db=db, 
+                                operacao_in=operacao_data, 
+                                robo_id_for_op=db_robo_atual.id, 
+                                schema_name=schema
+                            )
+                            robos_processados[nome_robo]['operacoes_salvas'] += 1
+                            operacoes_salvas += 1
+                        except Exception as e:
+                            processor._add_error(index, f"Erro ao salvar no banco: {e}")
+                            robos_processados[nome_robo]['erros'] += 1
+        else:
+            # Modo single robô (comportamento original)
+            logger.info(f"Processando como robô único: '{nome_robo_base}'")
+            
+            # Verificar/Criar o Robô único
+            db_robo = crud.get_robo_by_nome(db, nome=nome_robo_base, schema_name=schema)
+            if not db_robo:
+                logger.info(f"Criando novo robô '{nome_robo_base}' no schema '{schema}'")
+                robo_schema_in = schemas.RoboCreate(nome=nome_robo_base)
+                db_robo = crud.create_robo(db=db, robo_in=robo_schema_in, schema_name=schema)
+            
+            robos_processados[nome_robo_base] = {
+                'robo_id': db_robo.id,
+                'operacoes_salvas': 0,
+                'erros': 0
+            }
+            
+            # Processar cada linha
+            for index, row in df_processed.iterrows():
+                operacao_data = processor.process_single_row(index, row)
+                
+                if operacao_data:
+                    try:
+                        crud.create_operacao(
+                            db=db, 
+                            operacao_in=operacao_data, 
+                            robo_id_for_op=db_robo.id, 
+                            schema_name=schema
+                        )
+                        robos_processados[nome_robo_base]['operacoes_salvas'] += 1
+                        operacoes_salvas += 1
+                    except Exception as e:
+                        processor._add_error(index, f"Erro ao salvar no banco: {e}")
+                        robos_processados[nome_robo_base]['erros'] += 1
 
         # Preparar resposta
         summary = processor.get_processing_summary()
         
         response_data = {
             "message": f"Processamento concluído para '{filename}'",
-            "robo_nome": db_robo.nome,
-            "robo_id": db_robo.id,
             "schema": schema,
             "planilha_usada": target_sheet,
             "planilhas_disponiveis": available_sheets,
-            "operacoes_salvas": operacoes_salvas,
+            "operacoes_salvas_total": operacoes_salvas,
+            "robos_processados": robos_processados,
             "resumo": summary
         }
 

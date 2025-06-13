@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     ATIVO_COLUMNS: List[str] = ["Ativo", "Papel", "Symbol", "Instrumento"]
     LOTES_COLUMNS: List[str] = ["Qtd.", "Quantidade", "Lotes", "Quantity", "Volume"]
     TIPO_COLUMNS: List[str] = ["Tipo", "Operação", "Side", "Direction"]
+    ROBO_COLUMNS: List[str] = ["Robo", "Robot", "Setup", "Strategy", "Nome do Robo"]
     ROBO_COLUMN_NAME: str = "Robo"
     
     # Configurações de parsing do CSV
