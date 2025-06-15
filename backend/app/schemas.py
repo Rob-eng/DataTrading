@@ -31,6 +31,7 @@ class OperacaoBase(BaseModel):
     ativo: Optional[str] = Field(None, examples=["WINM24"])
     lotes: Optional[float] = Field(None, examples=[1.0, 5.0])
     tipo: Optional[TipoOperacaoEnum] = Field(None, examples=[TipoOperacaoEnum.COMPRA])
+    fonte_dados_id: Optional[str] = Field(None, description="Identificador da fonte dos dados")
 
     # Configuração para Pydantic (necessária para ORM mode em schemas de leitura)
     class Config:

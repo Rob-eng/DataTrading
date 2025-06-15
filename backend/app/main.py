@@ -6,7 +6,7 @@ from typing import List
 from .core.config import settings
 from .database import engine, Base, get_db # Importa engine, Base e get_db
 from . import models, schemas, crud      # Importa módulos locais
-from .routers import operacoes, robos, uploads        # Importa o router de operações
+from .routers import operacoes, robos, uploads, analytics, analytics_advanced        # Importa os routers de operações
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,8 @@ app = FastAPI(
 app.include_router(operacoes.router) # Inclui as rotas de /api/v1/operacoes
 app.include_router(robos.router)
 app.include_router(uploads.router)
+app.include_router(analytics.router) # Inclui as rotas de /api/v1/analytics
+app.include_router(analytics_advanced.router) # Inclui as rotas de /api/v1/analytics-advanced
 
 # Endpoint raiz de verificação de saúde (health check)
 @app.get(f"{settings.API_V1_STR}/health", tags=["Health"])
