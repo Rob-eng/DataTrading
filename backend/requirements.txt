@@ -7,6 +7,7 @@ pydantic-settings==2.2.1 # Para carregar configurações do .env e validar
 python-dotenv==1.0.1
 pandas==2.2.2      # Ainda útil para manipulação de dados
 numpy==1.26.4
+scipy==1.13.0      # Para métricas estatísticas avançadas (skewness, kurtosis, testes de normalidade)
 
 # Dependências para processamento de Excel
 openpyxl==3.1.2         # Para ler/escrever arquivos Excel (.xlsx)

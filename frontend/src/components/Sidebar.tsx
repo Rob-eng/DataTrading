@@ -6,7 +6,8 @@ import {
   TrendingUp, 
   Upload, 
   Home,
-  Activity
+  Activity,
+  Target
 } from 'lucide-react'
 
 const Sidebar: React.FC = () => {
@@ -15,6 +16,7 @@ const Sidebar: React.FC = () => {
   const menuItems = [
     { path: '/', icon: Home, label: 'Dashboard' },
     { path: '/analytics', icon: BarChart3, label: 'Analytics' },
+    { path: '/advanced-analytics', icon: Target, label: 'Analytics Avançados' },
     { path: '/robots', icon: Bot, label: 'Robôs' },
     { path: '/operations', icon: TrendingUp, label: 'Operações' },
     { path: '/upload', icon: Upload, label: 'Upload' },

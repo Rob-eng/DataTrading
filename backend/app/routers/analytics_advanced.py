@@ -7,6 +7,9 @@ import pandas as pd
 from statistics import mean, stdev
 import math
 from collections import defaultdict
+import numpy as np
+from scipy import stats
+import calendar
 
 from .. import crud, models, schemas
 from ..database import get_db
@@ -44,6 +47,351 @@ class FinancialCalculator:
         """Calcula retorno percentual baseado na margem"""
         margin = FinancialCalculator.get_margin(ativo) * contratos
         return (resultado_reais / margin) * 100 if margin > 0 else 0
+
+class AdvancedRiskMetrics:
+    """Métricas avançadas de risco e performance"""
+    
+    @staticmethod
+    def calculate_drawdown(cumulative_returns: List[float]) -> Dict[str, float]:
+        """Calcula drawdown máximo e métricas relacionadas"""
+        if not cumulative_returns:
+            return {"max_drawdown": 0, "max_drawdown_duration": 0, "current_drawdown": 0}
+        
+        peak = cumulative_returns[0]
+        max_drawdown = 0
+        current_drawdown = 0
+        drawdown_start = None
+        max_drawdown_duration = 0
+        current_duration = 0
+        
+        for i, value in enumerate(cumulative_returns):
+            if value > peak:
+                peak = value
+                if drawdown_start is not None:
+                    # Fim do drawdown
+                    max_drawdown_duration = max(max_drawdown_duration, current_duration)
+                    drawdown_start = None
+                    current_duration = 0
+            else:
+                if drawdown_start is None:
+                    drawdown_start = i
+                current_duration += 1
+                
+                drawdown = (peak - value) / peak if peak != 0 else 0
+                current_drawdown = drawdown
+                max_drawdown = max(max_drawdown, drawdown)
+        
+        # Se ainda estamos em drawdown
+        if drawdown_start is not None:
+            max_drawdown_duration = max(max_drawdown_duration, current_duration)
+        
+        return {
+            "max_drawdown": round(max_drawdown * 100, 2),  # em %
+            "max_drawdown_duration": max_drawdown_duration,  # em períodos
+            "current_drawdown": round(current_drawdown * 100, 2)  # em %
+        }
+    
+    @staticmethod
+    def calculate_var(returns: List[float], confidence_level: float = 0.95) -> float:
+        """Calcula Value at Risk (VaR)"""
+        if not returns or len(returns) < 2:
+            return 0
+        
+        sorted_returns = sorted(returns)
+        index = int((1 - confidence_level) * len(sorted_returns))
+        return abs(sorted_returns[index]) if index < len(sorted_returns) else 0
+    
+    @staticmethod
+    def calculate_sharpe_ratio(returns: List[float], risk_free_rate: float = 0.1085) -> float:
+        """Calcula Sharpe Ratio (assumindo CDI ~10.85% aa)"""
+        if not returns or stdev(returns) == 0:
+            return 0
+        
+        # Converter taxa anual para diária
+        daily_rf_rate = (1 + risk_free_rate) ** (1/252) - 1
+        
+        excess_returns = [r - daily_rf_rate for r in returns]
+        avg_excess_return = mean(excess_returns)
+        volatility = stdev(returns)
+        
+        return (avg_excess_return / volatility) * math.sqrt(252) if volatility != 0 else 0
+    
+    @staticmethod
+    def calculate_sortino_ratio(returns: List[float], risk_free_rate: float = 0.1085) -> float:
+        """Calcula Sortino Ratio (considera apenas volatilidade negativa)"""
+        if not returns:
+            return 0
+        
+        daily_rf_rate = (1 + risk_free_rate) ** (1/252) - 1
+        excess_returns = [r - daily_rf_rate for r in returns]
+        avg_excess_return = mean(excess_returns)
+        
+        # Apenas retornos negativos para o denominador
+        negative_returns = [r for r in returns if r < 0]
+        downside_deviation = stdev(negative_returns) if len(negative_returns) > 1 else 0
+        
+        return (avg_excess_return / downside_deviation) * math.sqrt(252) if downside_deviation != 0 else 0
+    
+    @staticmethod
+    def calculate_calmar_ratio(cumulative_returns: List[float], annualized_return: float) -> float:
+        """Calcula Calmar Ratio (retorno anualizado / max drawdown)"""
+        drawdown_info = AdvancedRiskMetrics.calculate_drawdown(cumulative_returns)
+        max_drawdown = drawdown_info["max_drawdown"] / 100  # converter para decimal
+        
+        return annualized_return / max_drawdown if max_drawdown != 0 else 0
+    
+    @staticmethod
+    def calculate_mae_mfe(operacoes: List[models.Operacao]) -> Dict[str, Any]:
+        """Calcula Maximum Adverse Excursion e Maximum Favorable Excursion"""
+        mae_data = []
+        mfe_data = []
+        
+        for op in operacoes:
+            if op.resultado is not None and op.mae is not None and op.mfe is not None:
+                mae_data.append(abs(op.mae))  # MAE sempre positivo
+                mfe_data.append(op.mfe)  # MFE pode ser positivo
+        
+        return {
+            "mae_medio": round(mean(mae_data), 2) if mae_data else 0,
+            "mae_maximo": round(max(mae_data), 2) if mae_data else 0,
+            "mfe_medio": round(mean(mfe_data), 2) if mfe_data else 0,
+            "mfe_maximo": round(max(mfe_data), 2) if mfe_data else 0,
+            "eficiencia_mae": round(mean([op.resultado / abs(op.mae) if op.mae != 0 else 0 
+                                        for op in operacoes if op.resultado is not None and op.mae is not None]), 2),
+            "eficiencia_mfe": round(mean([op.resultado / op.mfe if op.mfe != 0 else 0 
+                                        for op in operacoes if op.resultado is not None and op.mfe is not None]), 2)
+        }
+
+class SeasonalAnalyzer:
+    """Analisador de padrões sazonais"""
+    
+    @staticmethod
+    def analyze_monthly_performance(operacoes: List[models.Operacao]) -> Dict[str, Any]:
+        """Analisa performance por mês"""
+        monthly_data = defaultdict(list)
+        
+        for op in operacoes:
+            if op.data_abertura and op.resultado is not None:
+                month_key = f"{op.data_abertura.year}-{op.data_abertura.month:02d}"
+                month_name = calendar.month_name[op.data_abertura.month]
+                monthly_data[month_key].append({
+                    "resultado": op.resultado,
+                    "month_name": month_name,
+                    "year": op.data_abertura.year,
+                    "month": op.data_abertura.month
+                })
+        
+        monthly_summary = []
+        for month_key, ops in monthly_data.items():
+            resultados = [op["resultado"] for op in ops]
+            wins = len([r for r in resultados if r > 0])
+            
+            monthly_summary.append({
+                "periodo": month_key,
+                "mes_nome": ops[0]["month_name"],
+                "ano": ops[0]["year"],
+                "mes": ops[0]["month"],
+                "operacoes": len(ops),
+                "resultado_total": round(sum(resultados), 2),
+                "resultado_medio": round(mean(resultados), 2),
+                "taxa_acerto": round((wins / len(ops)) * 100, 2),
+                "melhor_operacao": round(max(resultados), 2),
+                "pior_operacao": round(min(resultados), 2)
+            })
+        
+        # Análise por mês do ano (agregada)
+        month_aggregate = defaultdict(list)
+        for op in operacoes:
+            if op.data_abertura and op.resultado is not None:
+                month_aggregate[op.data_abertura.month].append(op.resultado)
+        
+        monthly_patterns = []
+        for month in range(1, 13):
+            if month in month_aggregate:
+                resultados = month_aggregate[month]
+                wins = len([r for r in resultados if r > 0])
+                monthly_patterns.append({
+                    "mes": month,
+                    "mes_nome": calendar.month_name[month],
+                    "operacoes": len(resultados),
+                    "resultado_medio": round(mean(resultados), 2),
+                    "taxa_acerto": round((wins / len(resultados)) * 100, 2),
+                    "volatilidade": round(stdev(resultados), 2) if len(resultados) > 1 else 0
+                })
+            else:
+                monthly_patterns.append({
+                    "mes": month,
+                    "mes_nome": calendar.month_name[month],
+                    "operacoes": 0,
+                    "resultado_medio": 0,
+                    "taxa_acerto": 0,
+                    "volatilidade": 0
+                })
+        
+        return {
+            "por_periodo": sorted(monthly_summary, key=lambda x: x["periodo"]),
+            "padrao_mensal": monthly_patterns
+        }
+    
+    @staticmethod
+    def analyze_hourly_performance(operacoes: List[models.Operacao]) -> Dict[str, Any]:
+        """Analisa performance por hora do dia"""
+        hourly_data = defaultdict(list)
+        
+        for op in operacoes:
+            if op.data_abertura and op.resultado is not None:
+                hour = op.data_abertura.hour
+                hourly_data[hour].append(op.resultado)
+        
+        hourly_summary = []
+        for hour in range(24):
+            if hour in hourly_data:
+                resultados = hourly_data[hour]
+                wins = len([r for r in resultados if r > 0])
+                hourly_summary.append({
+                    "hora": hour,
+                    "hora_formatada": f"{hour:02d}:00",
+                    "operacoes": len(resultados),
+                    "resultado_total": round(sum(resultados), 2),
+                    "resultado_medio": round(mean(resultados), 2),
+                    "taxa_acerto": round((wins / len(resultados)) * 100, 2),
+                    "volatilidade": round(stdev(resultados), 2) if len(resultados) > 1 else 0
+                })
+            else:
+                hourly_summary.append({
+                    "hora": hour,
+                    "hora_formatada": f"{hour:02d}:00",
+                    "operacoes": 0,
+                    "resultado_total": 0,
+                    "resultado_medio": 0,
+                    "taxa_acerto": 0,
+                    "volatilidade": 0
+                })
+        
+        return {"por_hora": hourly_summary}
+    
+    @staticmethod
+    def analyze_weekday_performance(operacoes: List[models.Operacao]) -> Dict[str, Any]:
+        """Analisa performance por dia da semana"""
+        weekday_data = defaultdict(list)
+        weekday_names = {
+            1: "Segunda-feira", 2: "Terça-feira", 3: "Quarta-feira",
+            4: "Quinta-feira", 5: "Sexta-feira", 6: "Sábado", 7: "Domingo"
+        }
+        
+        for op in operacoes:
+            if op.data_abertura and op.resultado is not None:
+                weekday = op.data_abertura.isoweekday()  # 1=Monday, 7=Sunday
+                weekday_data[weekday].append(op.resultado)
+        
+        weekday_summary = []
+        for weekday in range(1, 8):
+            if weekday in weekday_data:
+                resultados = weekday_data[weekday]
+                wins = len([r for r in resultados if r > 0])
+                weekday_summary.append({
+                    "dia_semana": weekday,
+                    "dia_nome": weekday_names[weekday],
+                    "operacoes": len(resultados),
+                    "resultado_total": round(sum(resultados), 2),
+                    "resultado_medio": round(mean(resultados), 2),
+                    "taxa_acerto": round((wins / len(resultados)) * 100, 2),
+                    "volatilidade": round(stdev(resultados), 2) if len(resultados) > 1 else 0
+                })
+            else:
+                weekday_summary.append({
+                    "dia_semana": weekday,
+                    "dia_nome": weekday_names[weekday],
+                    "operacoes": 0,
+                    "resultado_total": 0,
+                    "resultado_medio": 0,
+                    "taxa_acerto": 0,
+                    "volatilidade": 0
+                })
+        
+        return {"por_dia_semana": weekday_summary}
+
+class DistributionAnalyzer:
+    """Analisador de distribuição de retornos"""
+    
+    @staticmethod
+    def analyze_return_distribution(operacoes: List[models.Operacao]) -> Dict[str, Any]:
+        """Analisa distribuição estatística dos retornos"""
+        resultados = [op.resultado for op in operacoes if op.resultado is not None]
+        
+        if len(resultados) < 4:
+            return {"erro": "Dados insuficientes para análise estatística"}
+        
+        # Estatísticas básicas
+        mean_return = mean(resultados)
+        std_return = stdev(resultados)
+        min_return = min(resultados)
+        max_return = max(resultados)
+        
+        # Quartis
+        sorted_results = sorted(resultados)
+        n = len(sorted_results)
+        q1 = sorted_results[n//4]
+        q2 = sorted_results[n//2]  # mediana
+        q3 = sorted_results[3*n//4]
+        
+        # Skewness e Kurtosis
+        skewness = stats.skew(resultados)
+        kurtosis_val = stats.kurtosis(resultados)
+        
+        # Teste de normalidade
+        shapiro_stat, shapiro_p = stats.shapiro(resultados[:5000])  # máximo 5000 amostras
+        
+        # Histograma (10 bins)
+        hist, bin_edges = np.histogram(resultados, bins=10)
+        histogram_data = []
+        for i in range(len(hist)):
+            histogram_data.append({
+                "faixa": f"{bin_edges[i]:.1f} a {bin_edges[i+1]:.1f}",
+                "frequencia": int(hist[i]),
+                "percentual": round((hist[i] / len(resultados)) * 100, 1)
+            })
+        
+        # Outliers (método IQR)
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        outliers = [r for r in resultados if r < lower_bound or r > upper_bound]
+        
+        return {
+            "estatisticas_basicas": {
+                "media": round(mean_return, 2),
+                "mediana": round(q2, 2),
+                "desvio_padrao": round(std_return, 2),
+                "minimo": round(min_return, 2),
+                "maximo": round(max_return, 2),
+                "amplitude": round(max_return - min_return, 2)
+            },
+            "quartis": {
+                "q1": round(q1, 2),
+                "q2_mediana": round(q2, 2),
+                "q3": round(q3, 2),
+                "iqr": round(iqr, 2)
+            },
+            "assimetria_curtose": {
+                "skewness": round(skewness, 3),
+                "kurtosis": round(kurtosis_val, 3),
+                "interpretacao_skew": "Assimétrica à direita" if skewness > 0.5 else "Assimétrica à esquerda" if skewness < -0.5 else "Aproximadamente simétrica",
+                "interpretacao_kurtosis": "Leptocúrtica (cauda pesada)" if kurtosis_val > 0 else "Platicúrtica (cauda leve)"
+            },
+            "teste_normalidade": {
+                "shapiro_statistic": round(shapiro_stat, 4),
+                "p_value": round(shapiro_p, 4),
+                "eh_normal": shapiro_p > 0.05,
+                "interpretacao": "Distribuição normal" if shapiro_p > 0.05 else "Distribuição não-normal"
+            },
+            "histograma": histogram_data,
+            "outliers": {
+                "quantidade": len(outliers),
+                "percentual": round((len(outliers) / len(resultados)) * 100, 1),
+                "valores": sorted([round(o, 2) for o in outliers])
+            }
+        }
 
 class TemporalAnalyzer:
     """Analisador de métricas temporais"""
@@ -867,6 +1215,558 @@ async def get_comparacao_benchmarks(
         
     except Exception as e:
         logger.error(f"Erro na comparação com benchmarks: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+
+@router.get("/metricas-risco-avancadas", summary="Métricas avançadas de risco")
+async def get_metricas_risco_avancadas(
+    db: Session = Depends(get_db),
+    robo_id: Optional[int] = Query(None, description="ID do robô específico"),
+    schema: str = Query(settings.DEFAULT_UPLOAD_SCHEMA, description="Schema do banco de dados"),
+    margem_total: Optional[float] = Query(None, description="Margem total (R$)")
+):
+    """
+    Calcula métricas avançadas de risco: Drawdown, VaR, Sharpe, Sortino, Calmar
+    """
+    try:
+        # Buscar operações
+        if robo_id:
+            operacoes = crud.get_operacoes_by_robo(db, robo_id, schema_name=schema, skip=0, limit=10000)
+        else:
+            operacoes = crud.get_operacoes(db, schema_name=schema, skip=0, limit=10000)
+        
+        if not operacoes:
+            return {"erro": "Nenhuma operação encontrada"}
+        
+        # Preparar dados
+        operacoes_ordenadas = sorted(
+            [op for op in operacoes if op.data_abertura and op.resultado is not None],
+            key=lambda x: x.data_abertura
+        )
+        
+        if len(operacoes_ordenadas) < 10:
+            return {"erro": "Dados insuficientes para análise de risco (mínimo 10 operações)"}
+        
+        # Calcular retornos
+        resultados = [op.resultado for op in operacoes_ordenadas]
+        
+        # Curva de capital
+        cumulative_returns = []
+        cumulative = 0
+        for resultado in resultados:
+            cumulative += resultado
+            cumulative_returns.append(cumulative)
+        
+        # Converter para retornos percentuais diários (baseado na margem)
+        if margem_total:
+            total_margin = margem_total
+        else:
+            # Usar margem padrão
+            ativo_principal = "WINM25"  # default
+            if operacoes_ordenadas:
+                # Usar ativo mais comum
+                ativos = [op.ativo for op in operacoes_ordenadas if op.ativo]
+                if ativos:
+                    from collections import Counter
+                    ativo_principal = Counter(ativos).most_common(1)[0][0]
+            
+            margem_por_contrato = FinancialCalculator.get_margin(ativo_principal)
+            total_margin = margem_por_contrato
+        
+        # Retornos diários em %
+        daily_returns = []
+        for resultado in resultados:
+            # Converter pontos para reais
+            resultado_reais = resultado * 0.20  # Valor estimado do ponto
+            return_pct = (resultado_reais / total_margin) if total_margin > 0 else 0
+            daily_returns.append(return_pct)
+        
+        # Calcular métricas
+        drawdown_info = AdvancedRiskMetrics.calculate_drawdown(cumulative_returns)
+        var_95 = AdvancedRiskMetrics.calculate_var(daily_returns, 0.95)
+        var_99 = AdvancedRiskMetrics.calculate_var(daily_returns, 0.99)
+        sharpe = AdvancedRiskMetrics.calculate_sharpe_ratio(daily_returns)
+        sortino = AdvancedRiskMetrics.calculate_sortino_ratio(daily_returns)
+        
+        # Retorno anualizado
+        total_return = sum(daily_returns)
+        days = len(daily_returns)
+        annualized_return = (total_return / days) * 252 if days > 0 else 0
+        
+        calmar = AdvancedRiskMetrics.calculate_calmar_ratio(cumulative_returns, annualized_return)
+        
+        # MAE/MFE se disponível
+        mae_mfe = AdvancedRiskMetrics.calculate_mae_mfe(operacoes_ordenadas)
+        
+        # Análise de sequências
+        consecutive_wins = 0
+        consecutive_losses = 0
+        max_consecutive_wins = 0
+        max_consecutive_losses = 0
+        current_streak = 0
+        
+        for resultado in resultados:
+            if resultado > 0:
+                if current_streak >= 0:
+                    current_streak += 1
+                else:
+                    current_streak = 1
+                max_consecutive_wins = max(max_consecutive_wins, current_streak)
+            elif resultado < 0:
+                if current_streak <= 0:
+                    current_streak -= 1
+                else:
+                    current_streak = -1
+                max_consecutive_losses = max(max_consecutive_losses, abs(current_streak))
+        
+        # Adicionar último streak
+        if current_streak > 0:
+            if streak_type == "win":
+                win_streaks.append(current_streak)
+            else:
+                loss_streaks.append(current_streak)
+        
+        return {
+            "periodo_analise": {
+                "total_operacoes": len(operacoes_ordenadas),
+                "dias_operando": days,
+                "primeira_operacao": operacoes_ordenadas[0].data_abertura.date().isoformat(),
+                "ultima_operacao": operacoes_ordenadas[-1].data_abertura.date().isoformat()
+            },
+            "metricas_drawdown": {
+                "max_drawdown_percent": drawdown_info["max_drawdown"],
+                "max_drawdown_duracao": drawdown_info["max_drawdown_duration"],
+                "drawdown_atual": drawdown_info["current_drawdown"],
+                "interpretacao": f"Maior perda consecutiva: {drawdown_info['max_drawdown']:.2f}%"
+            },
+            "value_at_risk": {
+                "var_95_percent": round(var_95 * 100, 2),
+                "var_99_percent": round(var_99 * 100, 2),
+                "interpretacao_95": f"95% das vezes, a perda diária não excede {var_95*100:.2f}%",
+                "interpretacao_99": f"99% das vezes, a perda diária não excede {var_99*100:.2f}%"
+            },
+            "ratios_performance": {
+                "sharpe_ratio": round(sharpe, 3),
+                "sortino_ratio": round(sortino, 3),
+                "calmar_ratio": round(calmar, 3),
+                "interpretacao_sharpe": "Excelente" if sharpe > 2 else "Bom" if sharpe > 1 else "Regular" if sharpe > 0 else "Ruim",
+                "interpretacao_sortino": "Excelente" if sortino > 2 else "Bom" if sortino > 1 else "Regular" if sortino > 0 else "Ruim"
+            },
+            "retornos": {
+                "retorno_total_percent": round(total_return * 100, 2),
+                "retorno_anualizado_percent": round(annualized_return * 100, 2),
+                "retorno_medio_diario": round(mean(daily_returns) * 100, 4),
+                "volatilidade_diaria": round(stdev(daily_returns) * 100, 2) if len(daily_returns) > 1 else 0
+            },
+            "analise_sequencias": {
+                "max_ganhos_consecutivos": max_consecutive_wins,
+                "max_perdas_consecutivas": max_consecutive_losses,
+                "streak_atual": current_streak
+            },
+            "mae_mfe": mae_mfe
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro nas métricas de risco avançadas: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+
+@router.get("/analise-sazonal", summary="Análise de padrões sazonais")
+async def get_analise_sazonal(
+    db: Session = Depends(get_db),
+    robo_id: Optional[int] = Query(None, description="ID do robô específico"),
+    schema: str = Query(settings.DEFAULT_UPLOAD_SCHEMA, description="Schema do banco de dados")
+):
+    """
+    Analisa padrões sazonais: performance por mês, hora e dia da semana
+    """
+    try:
+        # Buscar operações
+        if robo_id:
+            operacoes = crud.get_operacoes_by_robo(db, robo_id, schema_name=schema, skip=0, limit=10000)
+        else:
+            operacoes = crud.get_operacoes(db, schema_name=schema, skip=0, limit=10000)
+        
+        if not operacoes:
+            return {"erro": "Nenhuma operação encontrada"}
+        
+        # Análise mensal
+        monthly_analysis = SeasonalAnalyzer.analyze_monthly_performance(operacoes)
+        
+        # Análise por hora
+        hourly_analysis = SeasonalAnalyzer.analyze_hourly_performance(operacoes)
+        
+        # Análise por dia da semana
+        weekday_analysis = SeasonalAnalyzer.analyze_weekday_performance(operacoes)
+        
+        # Estatísticas resumo
+        melhores_meses = sorted(monthly_analysis["padrao_mensal"], 
+                               key=lambda x: x["resultado_medio"], reverse=True)[:3]
+        piores_meses = sorted(monthly_analysis["padrao_mensal"], 
+                             key=lambda x: x["resultado_medio"])[:3]
+        
+        melhores_horas = sorted([h for h in hourly_analysis["por_hora"] if h["operacoes"] > 0], 
+                               key=lambda x: x["resultado_medio"], reverse=True)[:5]
+        piores_horas = sorted([h for h in hourly_analysis["por_hora"] if h["operacoes"] > 0], 
+                             key=lambda x: x["resultado_medio"])[:5]
+        
+        melhores_dias = sorted(weekday_analysis["por_dia_semana"], 
+                              key=lambda x: x["resultado_medio"], reverse=True)[:3]
+        piores_dias = sorted(weekday_analysis["por_dia_semana"], 
+                            key=lambda x: x["resultado_medio"])[:3]
+        
+        return {
+            "resumo_geral": {
+                "total_operacoes": len(operacoes),
+                "periodo_analisado": {
+                    "inicio": min([op.data_abertura for op in operacoes if op.data_abertura]).date().isoformat(),
+                    "fim": max([op.data_abertura for op in operacoes if op.data_abertura]).date().isoformat()
+                }
+            },
+            "analise_mensal": monthly_analysis,
+            "analise_horaria": hourly_analysis,
+            "analise_semanal": weekday_analysis,
+            "insights": {
+                "melhores_meses": [{"mes": m["mes_nome"], "resultado": m["resultado_medio"]} for m in melhores_meses if m["operacoes"] > 0],
+                "piores_meses": [{"mes": m["mes_nome"], "resultado": m["resultado_medio"]} for m in piores_meses if m["operacoes"] > 0],
+                "melhores_horarios": [{"hora": h["hora_formatada"], "resultado": h["resultado_medio"]} for h in melhores_horas],
+                "piores_horarios": [{"hora": h["hora_formatada"], "resultado": h["resultado_medio"]} for h in piores_horas],
+                "melhores_dias_semana": [{"dia": d["dia_nome"], "resultado": d["resultado_medio"]} for d in melhores_dias if d["operacoes"] > 0],
+                "piores_dias_semana": [{"dia": d["dia_nome"], "resultado": d["resultado_medio"]} for d in piores_dias if d["operacoes"] > 0]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro na análise sazonal: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+
+@router.get("/distribuicao-retornos", summary="Análise de distribuição de retornos")
+async def get_distribuicao_retornos(
+    db: Session = Depends(get_db),
+    robo_id: Optional[int] = Query(None, description="ID do robô específico"),
+    schema: str = Query(settings.DEFAULT_UPLOAD_SCHEMA, description="Schema do banco de dados")
+):
+    """
+    Analisa distribuição estatística dos retornos das operações
+    """
+    try:
+        # Buscar operações
+        if robo_id:
+            operacoes = crud.get_operacoes_by_robo(db, robo_id, schema_name=schema, skip=0, limit=10000)
+        else:
+            operacoes = crud.get_operacoes(db, schema_name=schema, skip=0, limit=10000)
+        
+        if not operacoes:
+            return {"erro": "Nenhuma operação encontrada"}
+        
+        # Análise de distribuição
+        distribution_analysis = DistributionAnalyzer.analyze_return_distribution(operacoes)
+        
+        if "erro" in distribution_analysis:
+            return distribution_analysis
+        
+        # Análise adicional de percentis
+        resultados = [op.resultado for op in operacoes if op.resultado is not None]
+        sorted_results = sorted(resultados)
+        n = len(sorted_results)
+        
+        percentis = {}
+        for p in [5, 10, 25, 50, 75, 90, 95]:
+            index = int(p / 100 * n)
+            if index >= n:
+                index = n - 1
+            percentis[f"p{p}"] = round(sorted_results[index], 2)
+        
+        # Análise de clustering (sequências)
+        win_streaks = []
+        loss_streaks = []
+        current_streak = 0
+        streak_type = None
+        
+        for resultado in resultados:
+            if resultado > 0:
+                if streak_type == "win":
+                    current_streak += 1
+                else:
+                    if streak_type == "loss" and current_streak > 0:
+                        loss_streaks.append(current_streak)
+                    current_streak = 1
+                    streak_type = "win"
+            elif resultado < 0:
+                if streak_type == "loss":
+                    current_streak += 1
+                else:
+                    if streak_type == "win" and current_streak > 0:
+                        win_streaks.append(current_streak)
+                    current_streak = 1
+                    streak_type = "loss"
+        
+        # Adicionar último streak
+        if current_streak > 0:
+            if streak_type == "win":
+                win_streaks.append(current_streak)
+            else:
+                loss_streaks.append(current_streak)
+        
+        return {
+            "distribuicao_completa": distribution_analysis,
+            "percentis": percentis,
+            "analise_clustering": {
+                "sequencias_ganho": {
+                    "total": len(win_streaks),
+                    "media": round(mean(win_streaks), 1) if win_streaks else 0,
+                    "maxima": max(win_streaks) if win_streaks else 0,
+                    "distribuicao": win_streaks[:10]  # Primeiras 10
+                },
+                "sequencias_perda": {
+                    "total": len(loss_streaks),
+                    "media": round(mean(loss_streaks), 1) if loss_streaks else 0,
+                    "maxima": max(loss_streaks) if loss_streaks else 0,
+                    "distribuicao": loss_streaks[:10]  # Primeiras 10
+                }
+            },
+            "risco_concentracao": {
+                "resultado_maior_ganho": max(resultados) if resultados else 0,
+                "resultado_maior_perda": min(resultados) if resultados else 0,
+                "top_10_ganhos": sorted([r for r in resultados if r > 0], reverse=True)[:10],
+                "top_10_perdas": sorted([r for r in resultados if r < 0])[:10]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro na análise de distribuição: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+
+@router.get("/correlacao-robos", summary="Análise de correlação entre robôs")
+async def get_correlacao_robos(
+    db: Session = Depends(get_db),
+    schema: str = Query(settings.DEFAULT_UPLOAD_SCHEMA, description="Schema do banco de dados"),
+    min_operacoes: int = Query(50, description="Mínimo de operações por robô")
+):
+    """
+    Analisa correlação e diversificação entre diferentes robôs
+    """
+    try:
+        # Buscar todos os robôs
+        robos = crud.get_robos(db, schema_name=schema)
+        
+        if len(robos) < 2:
+            return {"erro": "Necessário pelo menos 2 robôs para análise de correlação"}
+        
+        # Coletar dados de cada robô
+        robos_data = {}
+        for robo in robos:
+            operacoes = crud.get_operacoes_by_robo(db, robo.id, schema_name=schema, skip=0, limit=10000)
+            
+            if len(operacoes) >= min_operacoes:
+                # Agrupar por dia
+                daily_results = defaultdict(float)
+                for op in operacoes:
+                    if op.data_abertura and op.resultado is not None:
+                        day_key = op.data_abertura.date().isoformat()
+                        daily_results[day_key] += op.resultado
+                
+                if len(daily_results) >= 10:  # Mínimo 10 dias
+                    robos_data[robo.nome or f"Robô {robo.id}"] = daily_results
+        
+        if len(robos_data) < 2:
+            return {"erro": "Dados insuficientes para análise de correlação"}
+        
+        # Criar matriz de correlação
+        robo_names = list(robos_data.keys())
+        
+        # Encontrar período comum
+        all_dates = set()
+        for daily_results in robos_data.values():
+            all_dates.update(daily_results.keys())
+        
+        common_dates = sorted(all_dates)
+        
+        # Filtrar datas que tenham dados para pelo menos 2 robôs
+        valid_dates = []
+        for date in common_dates:
+            robos_with_data = sum(1 for daily_results in robos_data.values() if date in daily_results)
+            if robos_with_data >= 2:
+                valid_dates.append(date)
+        
+        if len(valid_dates) < 10:
+            return {"erro": "Período comum insuficiente entre robôs"}
+        
+        # Calcular correlações
+        correlacao_matrix = {}
+        for i, robo1 in enumerate(robo_names):
+            correlacao_matrix[robo1] = {}
+            for j, robo2 in enumerate(robo_names):
+                if i == j:
+                    correlacao_matrix[robo1][robo2] = 1.0
+                else:
+                    # Calcular correlação de Pearson
+                    returns1 = []
+                    returns2 = []
+                    
+                    for date in valid_dates:
+                        ret1 = robos_data[robo1].get(date, 0)
+                        ret2 = robos_data[robo2].get(date, 0)
+                        returns1.append(ret1)
+                        returns2.append(ret2)
+                    
+                    if len(returns1) > 1 and stdev(returns1) > 0 and stdev(returns2) > 0:
+                        correlation = np.corrcoef(returns1, returns2)[0, 1]
+                        correlacao_matrix[robo1][robo2] = round(correlation, 3)
+                    else:
+                        correlacao_matrix[robo1][robo2] = 0.0
+        
+        # Estatísticas de diversificação
+        diversificacao_stats = {}
+        for robo_name, daily_results in robos_data.items():
+            resultados = list(daily_results.values())
+            diversificacao_stats[robo_name] = {
+                "total_operacoes": len([op for robo in robos if (robo.nome or f"Robô {robo.id}") == robo_name 
+                                      for op in crud.get_operacoes_by_robo(db, robo.id, schema_name=schema, skip=0, limit=10000)]),
+                "dias_operando": len(resultados),
+                "resultado_total": round(sum(resultados), 2),
+                "resultado_medio_diario": round(mean(resultados), 2) if resultados else 0,
+                "volatilidade_diaria": round(stdev(resultados), 2) if len(resultados) > 1 else 0,
+                "melhor_dia": round(max(resultados), 2) if resultados else 0,
+                "pior_dia": round(min(resultados), 2) if resultados else 0
+            }
+        
+        # Portfolio combinado
+        portfolio_daily = defaultdict(float)
+        for date in valid_dates:
+            for daily_results in robos_data.values():
+                portfolio_daily[date] += daily_results.get(date, 0)
+        
+        portfolio_results = list(portfolio_daily.values())
+        portfolio_stats = {
+            "resultado_total": round(sum(portfolio_results), 2),
+            "resultado_medio_diario": round(mean(portfolio_results), 2) if portfolio_results else 0,
+            "volatilidade_diaria": round(stdev(portfolio_results), 2) if len(portfolio_results) > 1 else 0,
+            "melhor_dia": round(max(portfolio_results), 2) if portfolio_results else 0,
+            "pior_dia": round(min(portfolio_results), 2) if portfolio_results else 0,
+            "sharpe_portfolio": 0  # Será calculado abaixo
+        }
+        
+        # Calcular Sharpe do portfolio
+        if len(portfolio_results) > 1 and stdev(portfolio_results) > 0:
+            # Assumir taxa livre de risco diária (CDI)
+            daily_rf = (1 + 0.1085) ** (1/252) - 1
+            excess_returns = [r - daily_rf for r in portfolio_results]
+            portfolio_stats["sharpe_portfolio"] = round(
+                (mean(excess_returns) / stdev(portfolio_results)) * math.sqrt(252), 3
+            )
+        
+        return {
+            "periodo_analise": {
+                "data_inicio": min(valid_dates),
+                "data_fim": max(valid_dates),
+                "dias_analisados": len(valid_dates)
+            },
+            "robos_analisados": len(robos_data),
+            "matriz_correlacao": correlacao_matrix,
+            "estatisticas_individuais": diversificacao_stats,
+            "portfolio_combinado": portfolio_stats,
+            "insights_diversificacao": {
+                "correlacao_media": round(np.mean([
+                    correlacao_matrix[r1][r2] for r1 in robo_names for r2 in robo_names if r1 != r2
+                ]), 3),
+                "pares_alta_correlacao": [
+                    {"robo1": r1, "robo2": r2, "correlacao": correlacao_matrix[r1][r2]}
+                    for r1 in robo_names for r2 in robo_names 
+                    if r1 < r2 and correlacao_matrix[r1][r2] > 0.7
+                ],
+                "pares_baixa_correlacao": [
+                    {"robo1": r1, "robo2": r2, "correlacao": correlacao_matrix[r1][r2]}
+                    for r1 in robo_names for r2 in robo_names 
+                    if r1 < r2 and correlacao_matrix[r1][r2] < 0.3
+                ]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro na análise de correlação: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+
+@router.get("/relatorio-completo", summary="Relatório completo de analytics avançados")
+async def get_relatorio_completo(
+    db: Session = Depends(get_db),
+    robo_id: Optional[int] = Query(None, description="ID do robô específico"),
+    schema: str = Query(settings.DEFAULT_UPLOAD_SCHEMA, description="Schema do banco de dados"),
+    margem_total: Optional[float] = Query(None, description="Margem total (R$)")
+):
+    """
+    Gera relatório consolidado com todas as métricas avançadas
+    """
+    try:
+        # Executar todas as análises em paralelo
+        import asyncio
+        
+        # Chamar endpoints internamente
+        metricas_risco = await get_metricas_risco_avancadas(db, robo_id, schema, margem_total)
+        analise_sazonal = await get_analise_sazonal(db, robo_id, schema)
+        distribuicao = await get_distribuicao_retornos(db, robo_id, schema)
+        
+        # Análise adicional de benchmark
+        benchmark = await get_comparacao_benchmarks(db, robo_id, schema, margem_total or 100000)
+        
+        # Resumo executivo
+        resumo_executivo = {
+            "tipo_analise": "Robô Específico" if robo_id else "Portfolio Completo",
+            "periodo": metricas_risco.get("periodo_analise", {}),
+            "performance_geral": {
+                "total_operacoes": metricas_risco.get("periodo_analise", {}).get("total_operacoes", 0),
+                "sharpe_ratio": metricas_risco.get("ratios_performance", {}).get("sharpe_ratio", 0),
+                "max_drawdown": metricas_risco.get("metricas_drawdown", {}).get("max_drawdown_percent", 0),
+                "retorno_anualizado": metricas_risco.get("retornos", {}).get("retorno_anualizado_percent", 0),
+                "vs_cdi": benchmark.get("comparacao", {}).get("vs_cdi", {}).get("multiplo", 0)
+            },
+            "principais_insights": []
+        }
+        
+        # Gerar insights automáticos
+        if metricas_risco.get("ratios_performance", {}).get("sharpe_ratio", 0) > 1.5:
+            resumo_executivo["principais_insights"].append(
+                f"✅ Excelente Sharpe Ratio de {metricas_risco['ratios_performance']['sharpe_ratio']}"
+            )
+        
+        if metricas_risco.get("metricas_drawdown", {}).get("max_drawdown_percent", 0) < 10:
+            resumo_executivo["principais_insights"].append(
+                f"✅ Drawdown controlado: {metricas_risco['metricas_drawdown']['max_drawdown_percent']:.1f}%"
+            )
+        elif metricas_risco.get("metricas_drawdown", {}).get("max_drawdown_percent", 0) > 20:
+            resumo_executivo["principais_insights"].append(
+                f"⚠️ Drawdown elevado: {metricas_risco['metricas_drawdown']['max_drawdown_percent']:.1f}%"
+            )
+        
+        # Insights sazonais
+        if "insights" in analise_sazonal:
+            melhores_meses = analise_sazonal["insights"].get("melhores_meses", [])
+            if melhores_meses:
+                resumo_executivo["principais_insights"].append(
+                    f"📅 Melhor sazonalidade: {melhores_meses[0]['mes']}"
+                )
+        
+        return {
+            "data_relatorio": datetime.now().isoformat(),
+            "resumo_executivo": resumo_executivo,
+            "metricas_risco": metricas_risco,
+            "analise_sazonal": analise_sazonal,
+            "distribuicao_retornos": distribuicao,
+            "comparacao_benchmarks": benchmark,
+            "recomendacoes": {
+                "gestao_risco": [
+                    "Monitore o drawdown máximo regularmente",
+                    "Considere reduzir exposição em períodos de alta volatilidade",
+                    "Mantenha diversificação adequada do portfolio"
+                ],
+                "otimizacao": [
+                    "Analise padrões sazonais para timing de entrada/saída",
+                    "Considere ajustar tamanho de posição baseado na volatilidade",
+                    "Monitore correlações entre diferentes estratégias"
+                ]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro no relatório completo: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
  
