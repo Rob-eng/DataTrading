@@ -491,7 +491,7 @@ async def upload_operacoes_excel(
             excel_file = pd.ExcelFile(buffer, engine=engine)
             available_sheets = excel_file.sheet_names
             logger.info(f"Planilhas disponíveis: {available_sheets}")
-            
+
             # Determinar qual planilha usar
             target_sheet = sheet_name if sheet_name else available_sheets[0]
             if target_sheet not in available_sheets:
@@ -542,7 +542,7 @@ async def upload_operacoes_excel(
             for nome_robo in robos_unicos:
                 if not nome_robo or nome_robo.lower() in ['nan', 'none', '']:
                     continue
-                    
+
                 # Buscar/criar robô
                 db_robo_atual = crud.get_robo_by_nome(db, nome=nome_robo, schema_name=schema)
                 if not db_robo_atual:
@@ -644,4 +644,4 @@ async def upload_operacoes_excel(
             detail=f"Erro interno ao processar arquivo Excel: {str(e)}"
         )
     finally:
-        await arquivo_excel.close()
+        await arquivo_excel.close() 

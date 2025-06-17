@@ -1,5 +1,6 @@
 import logging
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -43,6 +44,15 @@ except Exception as e_init:
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json" # Caminho para o schema OpenAPI
+)
+
+# Configuração de CORS para permitir conexões do frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite todas as origens para desenvolvimento
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Inclui os routers (onde os endpoints específicos são definidos)

@@ -230,17 +230,22 @@ async def get_metricas_financeiras(
     db: Session = Depends(get_db),
     robo_id: Optional[int] = Query(None, description="ID do robô específico"),
     schema: str = Query(settings.DEFAULT_UPLOAD_SCHEMA, description="Schema do banco de dados"),
-    contratos: int = Query(1, description="Número de contratos por operação")
+    contratos: int = Query(1, description="Número de contratos por operação"),
+    margem_total: Optional[float] = Query(None, description="Margem total configurada pelo usuário (R$)")
 ):
     """
     Retorna métricas financeiras convertidas para reais e percentuais
     """
     try:
-        # Buscar operações
+        # Buscar operações - CORRIGIDO: agora filtra corretamente por robo_id
         if robo_id:
+            logger.info(f"Buscando operações para robô ID: {robo_id}")
             operacoes = crud.get_operacoes_by_robo(db, robo_id, schema_name=schema, skip=0, limit=10000)
+            logger.info(f"Encontradas {len(operacoes)} operações para robô {robo_id}")
         else:
+            logger.info("Buscando todas as operações")
             operacoes = crud.get_operacoes(db, schema_name=schema, skip=0, limit=10000)
+            logger.info(f"Encontradas {len(operacoes)} operações totais")
         
         if not operacoes:
             return {"metricas": {}, "por_ativo": {}}
@@ -250,8 +255,8 @@ async def get_metricas_financeiras(
         
         # Análise por ativo
         por_ativo = {}
+        total_pontos = 0
         total_reais = 0
-        total_margin = 0
         
         for operacao in operacoes:
             if operacao.resultado is None or not operacao.ativo:
@@ -263,7 +268,6 @@ async def get_metricas_financeiras(
                     "operacoes": 0,
                     "pontos_total": 0,
                     "reais_total": 0,
-                    "margem_utilizada": 0,
                     "retorno_percentual": 0
                 }
             
@@ -271,29 +275,46 @@ async def get_metricas_financeiras(
             pontos = operacao.resultado
             num_contratos = operacao.lotes or contratos
             reais = FinancialCalculator.points_to_reais(pontos, ativo, num_contratos)
-            margin = FinancialCalculator.get_margin(ativo) * num_contratos
             
             # Acumular por ativo
             por_ativo[ativo]["operacoes"] += 1
             por_ativo[ativo]["pontos_total"] += pontos
             por_ativo[ativo]["reais_total"] += reais
-            por_ativo[ativo]["margem_utilizada"] += margin
             
             # Acumular geral
+            total_pontos += pontos
             total_reais += reais
-            total_margin += margin
         
-        # Calcular retorno percentual por ativo
+        # Calcular margem total baseada na configuração
+        if margem_total:
+            # Usar margem total informada pelo usuário
+            total_margin = margem_total
+        else:
+            # Calcular margem baseada no ativo mais comum ou padrão
+            ativo_principal = max(por_ativo.keys(), key=lambda k: por_ativo[k]["operacoes"]) if por_ativo else "WINM25"
+            margem_por_contrato = FinancialCalculator.get_margin(ativo_principal)
+            total_margin = margem_por_contrato * contratos
+        
+        # Calcular retorno percentual por ativo (proporcional ao resultado)
         for ativo in por_ativo:
-            if por_ativo[ativo]["margem_utilizada"] > 0:
-                por_ativo[ativo]["retorno_percentual"] = round(
-                    (por_ativo[ativo]["reais_total"] / por_ativo[ativo]["margem_utilizada"]) * 100, 2
-                )
+            # Calcular retorno percentual baseado na proporção dos resultados
+            if total_margin > 0 and total_reais != 0:
+                # Proporção da margem para este ativo baseada na contribuição dos resultados
+                proporcao_resultado = por_ativo[ativo]["reais_total"] / total_reais if total_reais != 0 else 0
+                margem_proporcional = total_margin * abs(proporcao_resultado)
+                
+                if margem_proporcional > 0:
+                    por_ativo[ativo]["retorno_percentual"] = round(
+                        (por_ativo[ativo]["reais_total"] / margem_proporcional) * 100, 2
+                    )
+                else:
+                    por_ativo[ativo]["retorno_percentual"] = 0
+            else:
+                por_ativo[ativo]["retorno_percentual"] = 0
             
             # Arredondar valores
             por_ativo[ativo]["pontos_total"] = round(por_ativo[ativo]["pontos_total"], 2)
             por_ativo[ativo]["reais_total"] = round(por_ativo[ativo]["reais_total"], 2)
-            por_ativo[ativo]["margem_utilizada"] = round(por_ativo[ativo]["margem_utilizada"], 2)
         
         # Retorno percentual geral
         retorno_percentual_geral = (total_reais / total_margin * 100) if total_margin > 0 else 0
@@ -302,7 +323,7 @@ async def get_metricas_financeiras(
             "total_operacoes": len(operacoes),
             "total_pontos": round(total_pontos, 2),
             "total_reais": round(total_reais, 2),
-            "margem_total_utilizada": round(total_margin, 2),
+            "margem_total_necessaria": round(total_margin, 2),
             "retorno_percentual": round(retorno_percentual_geral, 2),
             "contratos_considerados": contratos
         }
@@ -408,7 +429,8 @@ async def get_filtros_avancados(
     dias_semana: Optional[str] = Query(None, description="Dias da semana (1-7, separados por vírgula)"),
     max_stops_dia: Optional[int] = Query(None, description="Máximo de stops por dia"),
     limite_risco_diario: Optional[float] = Query(None, description="Limite de risco diário (R$)"),
-    meta_ganho_diario: Optional[float] = Query(None, description="Meta de ganho diário (R$)")
+    meta_ganho_diario: Optional[float] = Query(None, description="Meta de ganho diário (R$)"),
+    controle_por_robo: bool = Query(False, description="True = aplicar controles por robô individual, False = controle geral")
 ):
     """
     Análise completa com todos os filtros avançados solicitados
@@ -448,50 +470,104 @@ async def get_filtros_avancados(
             except ValueError:
                 pass
         
-        # Análise com controles de risco
-        daily_groups = defaultdict(list)
-        for op in operacoes:
-            if op.data_abertura and op.resultado is not None:
-                day_key = op.data_abertura.date().isoformat()
-                daily_groups[day_key].append(op)
+        # Aplicar controles de risco e coletar operações controladas
+        operacoes_controladas = []
         
-        # Simular controles de risco
-        resultado_original = 0
-        resultado_com_controles = 0
-        dias_com_stop = 0
-        dias_com_meta = 0
+        # Calcular resultado original (com filtros básicos apenas)
+        resultado_original = sum(op.resultado for op in operacoes if op.resultado is not None)
         
-        for day, ops in daily_groups.items():
-            ops_sorted = sorted(ops, key=lambda x: x.data_abertura if x.data_abertura else datetime.min)
+        # Se não há controles de risco, usar todas as operações filtradas
+        if not (limite_risco_diario or meta_ganho_diario or max_stops_dia):
+            operacoes_controladas = operacoes
+            resultado_com_controles = resultado_original
+            dias_com_stop = 0
+            dias_com_meta = 0
+        else:
+            # Análise com controles de risco
+            resultado_com_controles = 0
+            dias_com_stop = 0
+            dias_com_meta = 0
             
-            resultado_dia_original = sum(op.resultado for op in ops_sorted)
-            resultado_original += resultado_dia_original
-            
-            # Simular controles
-            resultado_dia_controlado = 0
-            stops_aplicados = 0
-            
-            for op in ops_sorted:
-                # Verificar limite de stops
-                if max_stops_dia and stops_aplicados >= max_stops_dia and op.resultado < 0:
-                    continue  # Não executar mais stops
+            if controle_por_robo:
+                # Controle por robô individual
+                # Agrupar por robô e dia
+                robo_daily_groups = defaultdict(lambda: defaultdict(list))
+                for op in operacoes:
+                    if op.data_abertura and op.resultado is not None:
+                        day_key = op.data_abertura.date().isoformat()
+                        robo_id_key = op.robo_id or 0
+                        robo_daily_groups[robo_id_key][day_key].append(op)
                 
-                resultado_dia_controlado += op.resultado
+                # Simular controles para cada robô separadamente
+                for robo_id_key, daily_groups in robo_daily_groups.items():
+                    for day, ops in daily_groups.items():
+                        ops_sorted = sorted(ops, key=lambda x: x.data_abertura if x.data_abertura else datetime.min)
+                        
+                        # Simular controles para este robô neste dia
+                        resultado_dia_controlado = 0
+                        stops_aplicados = 0
+                        
+                        for op in ops_sorted:
+                            # Verificar limite de stops por robô
+                            if max_stops_dia and stops_aplicados >= max_stops_dia and op.resultado < 0:
+                                continue  # Não executar mais stops para este robô
+                            
+                            resultado_dia_controlado += op.resultado
+                            operacoes_controladas.append(op)  # Adicionar operação controlada
+                            
+                            if op.resultado < 0:
+                                stops_aplicados += 1
+                            
+                            # Verificar limite de risco diário por robô
+                            if limite_risco_diario and resultado_dia_controlado <= -abs(limite_risco_diario):
+                                dias_com_stop += 1
+                                break
+                            
+                            # Verificar meta de ganho diário por robô
+                            if meta_ganho_diario and resultado_dia_controlado >= meta_ganho_diario:
+                                dias_com_meta += 1
+                                break
+                        
+                        resultado_com_controles += resultado_dia_controlado
+                        
+            else:
+                # Controle geral (todos os robôs juntos)
+                daily_groups = defaultdict(list)
+                for op in operacoes:
+                    if op.data_abertura and op.resultado is not None:
+                        day_key = op.data_abertura.date().isoformat()
+                        daily_groups[day_key].append(op)
                 
-                if op.resultado < 0:
-                    stops_aplicados += 1
-                
-                # Verificar limite de risco diário (em pontos - simplificado)
-                if limite_risco_diario and resultado_dia_controlado <= -abs(limite_risco_diario):
-                    dias_com_stop += 1
-                    break
-                
-                # Verificar meta de ganho diário
-                if meta_ganho_diario and resultado_dia_controlado >= meta_ganho_diario:
-                    dias_com_meta += 1
-                    break
-            
-            resultado_com_controles += resultado_dia_controlado
+                # Simular controles de risco
+                for day, ops in daily_groups.items():
+                    ops_sorted = sorted(ops, key=lambda x: x.data_abertura if x.data_abertura else datetime.min)
+                    
+                    # Simular controles
+                    resultado_dia_controlado = 0
+                    stops_aplicados = 0
+                    
+                    for op in ops_sorted:
+                        # Verificar limite de stops geral
+                        if max_stops_dia and stops_aplicados >= max_stops_dia and op.resultado < 0:
+                            continue  # Não executar mais stops
+                        
+                        resultado_dia_controlado += op.resultado
+                        operacoes_controladas.append(op)  # Adicionar operação controlada
+                        
+                        if op.resultado < 0:
+                            stops_aplicados += 1
+                        
+                        # Verificar limite de risco diário geral
+                        if limite_risco_diario and resultado_dia_controlado <= -abs(limite_risco_diario):
+                            dias_com_stop += 1
+                            break
+                        
+                        # Verificar meta de ganho diário geral
+                        if meta_ganho_diario and resultado_dia_controlado >= meta_ganho_diario:
+                            dias_com_meta += 1
+                            break
+                    
+                    resultado_com_controles += resultado_dia_controlado
         
         # Métricas finais
         total_operacoes_original = len(operacoes)
@@ -499,6 +575,25 @@ async def get_filtros_avancados(
         if total_operacoes_original > 0:
             wins = len([op for op in operacoes if op.resultado and op.resultado > 0])
             win_rate_original = (wins / total_operacoes_original) * 100
+        
+        # Calcular dias analisados baseado no tipo de controle
+        if controle_por_robo and (limite_risco_diario or meta_ganho_diario or max_stops_dia):
+            # Para controle por robô, usar robo_daily_groups
+            robo_daily_groups = defaultdict(lambda: defaultdict(list))
+            for op in operacoes:
+                if op.data_abertura and op.resultado is not None:
+                    day_key = op.data_abertura.date().isoformat()
+                    robo_id_key = op.robo_id or 0
+                    robo_daily_groups[robo_id_key][day_key].append(op)
+            total_dias = sum(len(daily_groups) for daily_groups in robo_daily_groups.values())
+        else:
+            # Para controle geral ou sem controles
+            daily_groups = defaultdict(list)
+            for op in operacoes:
+                if op.data_abertura and op.resultado is not None:
+                    day_key = op.data_abertura.date().isoformat()
+                    daily_groups[day_key].append(op)
+            total_dias = len(daily_groups)
         
         return {
             "filtros_aplicados": {
@@ -508,13 +603,15 @@ async def get_filtros_avancados(
                 "dias_semana": dias_semana,
                 "max_stops_dia": max_stops_dia,
                 "limite_risco_diario": limite_risco_diario,
-                "meta_ganho_diario": meta_ganho_diario
+                "meta_ganho_diario": meta_ganho_diario,
+                "controle_por_robo": controle_por_robo,
+                "tipo_controle": "Por Robô Individual" if controle_por_robo else "Geral (Todos os Robôs)"
             },
             "resultados_originais": {
                 "total_operacoes": total_operacoes_original,
                 "resultado_total": round(resultado_original, 2),
                 "win_rate": round(win_rate_original, 2),
-                "dias_analisados": len(daily_groups)
+                "dias_analisados": total_dias
             },
             "resultados_com_controles": {
                 "resultado_total": round(resultado_com_controles, 2),
@@ -522,7 +619,7 @@ async def get_filtros_avancados(
                 "dias_com_stop_loss": dias_com_stop,
                 "dias_com_meta_atingida": dias_com_meta
             },
-                         "performance_por_dia_semana": _analyze_weekday_performance(operacoes)
+            "performance_por_dia_semana": _analyze_weekday_performance(operacoes_controladas)
         }
         
     except Exception as e:
@@ -551,6 +648,108 @@ def _analyze_weekday_performance(operacoes):
             }
     
     return result
+
+@router.get("/dados-graficos-robo", summary="Dados específicos para gráficos de um robô")
+async def get_dados_graficos_robo(
+    db: Session = Depends(get_db),
+    robo_id: int = Query(..., description="ID do robô específico"),
+    schema: str = Query(settings.DEFAULT_UPLOAD_SCHEMA, description="Schema do banco de dados")
+):
+    """
+    Retorna todos os dados necessários para os gráficos de um robô específico
+    """
+    try:
+        logger.info(f"Carregando dados gráficos para robô ID: {robo_id}")
+        
+        # Buscar operações específicas do robô
+        operacoes = crud.get_operacoes_by_robo(db, robo_id, schema_name=schema, skip=0, limit=10000)
+        
+        if not operacoes:
+            return {
+                "equity_curve": [],
+                "performance_by_asset": [],
+                "monthly_performance": [],
+                "scatter_data": [],
+                "win_loss_distribution": []
+            }
+
+        logger.info(f"Processando {len(operacoes)} operações para robô {robo_id}")
+        
+        # 1. Curva de Capital (Equity Curve)
+        operacoes_ordenadas = sorted(
+            [op for op in operacoes if op.data_abertura and op.resultado is not None],
+            key=lambda x: x.data_abertura
+        )
+        
+        cumulative = 0
+        equity_curve = []
+        for op in operacoes_ordenadas:
+            cumulative += op.resultado
+            equity_curve.append({
+                "date": op.data_abertura.isoformat(),
+                "value": op.resultado,
+                "cumulative": cumulative
+            })
+
+        # 2. Performance por Ativo
+        by_asset = {}
+        for op in operacoes:
+            if op.ativo and op.resultado is not None:
+                by_asset[op.ativo] = by_asset.get(op.ativo, 0) + op.resultado
+        
+        performance_by_asset = [
+            {"label": ativo, "value": resultado}
+            for ativo, resultado in by_asset.items()
+        ]
+
+        # 3. Performance Mensal
+        by_month = {}
+        for op in operacoes:
+            if op.data_abertura and op.resultado is not None:
+                month_key = f"{op.data_abertura.year}-{op.data_abertura.month:02d}"
+                by_month[month_key] = by_month.get(month_key, 0) + op.resultado
+        
+        monthly_performance = [
+            {"label": month, "value": resultado}
+            for month, resultado in sorted(by_month.items())
+        ]
+
+        # 4. Scatter Data (Operações por Horário)
+        scatter_data = []
+        for op in operacoes:
+            if op.data_abertura and op.resultado is not None:
+                scatter_data.append({
+                    "hour": op.data_abertura.hour,
+                    "minute": op.data_abertura.minute,
+                    "result": op.resultado,
+                    "time": op.data_abertura.strftime("%H:%M")
+                })
+
+        # 5. Distribuição Win/Loss
+        wins = len([op for op in operacoes if op.resultado and op.resultado > 0])
+        losses = len([op for op in operacoes if op.resultado and op.resultado < 0])
+        breakeven = len([op for op in operacoes if op.resultado == 0])
+        
+        win_loss_distribution = [
+            {"label": "Ganhos", "value": wins, "color": "#10b981"},
+            {"label": "Perdas", "value": losses, "color": "#ef4444"},
+            {"label": "Empates", "value": breakeven, "color": "#6b7280"}
+        ]
+
+        logger.info(f"Dados processados com sucesso para robô {robo_id}")
+        
+        return {
+            "equity_curve": equity_curve,
+            "performance_by_asset": performance_by_asset,
+            "monthly_performance": monthly_performance,
+            "scatter_data": scatter_data,
+            "win_loss_distribution": win_loss_distribution,
+            "total_operacoes": len(operacoes)
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro ao carregar dados gráficos do robô {robo_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
 @router.get("/comparacao-benchmarks", summary="Comparação com CDI e IBOV")
 async def get_comparacao_benchmarks(
