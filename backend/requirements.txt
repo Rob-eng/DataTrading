@@ -8,6 +8,7 @@ python-dotenv==1.0.1
 pandas==2.2.2      # Ainda útil para manipulação de dados
 numpy==1.26.4
 scipy==1.13.0      # Para métricas estatísticas avançadas (skewness, kurtosis, testes de normalidade)
+pytz==2024.1       # Para manipulação de timezones
 
 # Dependências para processamento de Excel
 openpyxl==3.1.2         # Para ler/escrever arquivos Excel (.xlsx)

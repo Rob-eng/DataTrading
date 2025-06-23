@@ -58,7 +58,7 @@ export const SimpleLineChart: React.FC<LineChartProps> = ({
   return (
     <div className="bg-white rounded-lg border p-4">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
-      <svg width={width} height={height} className="border rounded">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto border rounded">
         {/* Grid lines */}
         <defs>
           <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
@@ -142,7 +142,7 @@ export const SimpleBarChart: React.FC<BarChartProps> = ({
   return (
     <div className="bg-white rounded-lg border p-4">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
-      <svg width={width} height={height} className="border rounded">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto border rounded">
         {/* Grid */}
         <defs>
           <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
@@ -235,9 +235,9 @@ export const SimplePieChart: React.FC<PieChartProps> = ({
       <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
       <div className="flex items-center justify-center">
         <div className="flex flex-col items-center">
-          <svg width={size} height={size}>
+          <svg viewBox={`0 0 ${size} ${size}`} className="w-full h-auto max-w-[${size}px]">
             {data.map((item, index) => {
-              const percentage = (Math.abs(item.value) / total) * 100
+              // const percentage = (Math.abs(item.value) / total) * 100
               const angle = (Math.abs(item.value) / total) * 360
               const startAngle = currentAngle
               const endAngle = currentAngle + angle
@@ -337,7 +337,7 @@ export const EquityCurve: React.FC<EquityCurveProps> = ({
   return (
     <div className="bg-white rounded-lg border p-4">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
-      <svg width={width} height={height} className="border rounded">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto border rounded">
         {/* Grid */}
         <defs>
           <pattern id="grid" width="50" height="30" patternUnits="userSpaceOnUse">
@@ -457,7 +457,7 @@ export const PerformanceHeatmap: React.FC<HeatmapProps> = ({
   return (
     <div className="bg-white rounded-lg border p-4">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
-      <svg width={width} height={height}>
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
         {/* Hour labels */}
         {hours.map(hour => (
           <text
@@ -535,6 +535,177 @@ export const PerformanceHeatmap: React.FC<HeatmapProps> = ({
   )
 }
 
+// Componente de Evolução Diária de Resultados (Intraday)
+interface DailyEvolutionProps {
+  data: Record<string, { 
+    time: string; 
+    timeFormatted?: string;
+    date?: string;
+    cumulativeResult: number; 
+    operationResult: number 
+  }[]>
+  title: string
+  height?: number
+  width?: number
+  p80?: number
+}
+
+export const DailyEvolutionChart: React.FC<DailyEvolutionProps> = ({
+  data,
+  title,
+  height = 400,
+  width = 900,
+  p80 = 0,
+}) => {
+  const sortedDays = Object.keys(data).sort((a, b) => a.localeCompare(b));
+
+  // Step 1: Flatten all data to calculate global scales
+  const allYValues: number[] = [0]; // Ensure 0 is in the scale
+  if (p80) allYValues.push(p80);
+  Object.values(data).forEach(dayOps => {
+    dayOps.forEach(op => allYValues.push(op.cumulativeResult));
+  });
+
+  if (allYValues.length <= 1) {
+    return (
+      <div className="bg-gray-50 rounded-lg p-4 text-center">
+        <p className="text-gray-500">Sem dados para exibir</p>
+      </div>
+    );
+  }
+
+  const maxValue = Math.max(...allYValues);
+  const minValue = Math.min(...allYValues);
+  const range = maxValue - minValue || 1;
+
+  // Step 2: Prepare renderable data for each day segment
+  const dailySegments: { key: string; polyline: string; polygon: string }[] = [];
+  const daySeparators: { x: number; date: string }[] = [];
+  let globalOpIndex = 0;
+  
+  // Calculate total operations for a continuous X-axis
+  const totalOps = sortedDays.reduce((acc, date) => acc + (data[date]?.length || 0), 0);
+
+  const padding = 60;
+  const chartWidth = width - 2 * padding;
+  const chartHeight = height - 2 * padding;
+
+  const xScale = (x: number) => padding + (x / totalOps) * chartWidth;
+  const yScale = (y: number) => padding + ((maxValue - y) / range) * chartHeight;
+
+  sortedDays.forEach(date => {
+    const operations = data[date];
+    if (!operations || operations.length === 0) return;
+
+    daySeparators.push({ x: globalOpIndex, date });
+
+    const dayPoints: { x: number; y: number }[] = [];
+    
+    // Start the line at zero for this day's segment
+    dayPoints.push({ x: globalOpIndex, y: 0 });
+
+    operations.forEach(op => {
+      globalOpIndex++;
+      dayPoints.push({ x: globalOpIndex, y: op.cumulativeResult });
+    });
+
+    const polylineString = dayPoints.map(p => `${xScale(p.x)},${yScale(p.y)}`).join(' ');
+    
+    const startFillPoint = `${xScale(dayPoints[0].x)},${yScale(0)}`;
+    const endFillPoint = `${xScale(dayPoints[dayPoints.length - 1].x)},${yScale(0)}`;
+    const polygonString = `${startFillPoint} ${polylineString} ${endFillPoint}`;
+    
+    dailySegments.push({ key: date, polyline: polylineString, polygon: polygonString });
+  });
+
+  const zeroY = yScale(0);
+
+  // Step 3: Render the SVG
+  return (
+    <div className="bg-white rounded-lg border p-4">
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto border rounded">
+        <defs>
+          <pattern id="evolutionGrid" width="50" height="30" patternUnits="userSpaceOnUse">
+            <path d="M 50 0 L 0 0 0 30" fill="none" stroke="#f0f0f0" strokeWidth="1"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#evolutionGrid)" />
+        
+        {daySeparators.map(({ x, date }, index) => {
+            if (index === 0) return null;
+            return (
+              <line
+                key={date}
+                x1={xScale(x)} y1={padding}
+                x2={xScale(x)} y2={height - padding}
+                stroke="#e0e0e0" strokeWidth="1" strokeDasharray="3,3"
+              />
+            )
+        })}
+
+        <line x1={padding} y1={zeroY} x2={width - padding} y2={zeroY} stroke="#333" strokeWidth="1.5" />
+        
+        <line x1={padding} y1={padding} x2={padding} y2={height - padding} stroke="#666" strokeWidth="2"/>
+        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#666" strokeWidth="2"/>
+        
+        {dailySegments.map(segment => (
+          <g key={segment.key}>
+            <polygon fill="#3b82f6" fillOpacity="0.1" points={segment.polygon} />
+            <polyline fill="none" stroke="#3b82f6" strokeWidth="1.5" points={segment.polyline} />
+          </g>
+        ))}
+
+        {daySeparators.map(({ x, date }, index) => {
+          const maxLabels = 10;
+          if (daySeparators.length > maxLabels && index % Math.ceil(daySeparators.length / maxLabels) !== 0) {
+            return null;
+          }
+          return (
+            <text
+              key={`label-${date}`}
+              x={xScale(x)}
+              y={height - padding + 20}
+              textAnchor="middle" fontSize="10" fill="#666"
+            >
+              {new Date(date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' })}
+            </text>
+          );
+        })}
+        
+        {[0.25, 0.5, 0.75, 1].map((ratio) => {
+          const value = minValue + ratio * range;
+          return (
+            <text key={ratio} x={padding - 8} y={yScale(value)} textAnchor="end" fontSize="11" fill="#666" dy="4">
+              {value.toFixed(0)}
+            </text>
+          );
+        })}
+        
+        {p80 > 0 && p80 < maxValue && (
+          <g>
+            <line
+              x1={padding} y1={yScale(p80)}
+              x2={width - padding} y2={yScale(p80)}
+              stroke="#f97316" strokeWidth="2" strokeDasharray="6,3"
+            />
+            <text x={width - padding} y={yScale(p80) - 6} textAnchor="end" fontSize="12" fill="#f97316" fontWeight="bold">
+              P80 ({p80.toFixed(0)})
+            </text>
+          </g>
+        )}
+        
+        <text x={padding - 45} y={height / 2} textAnchor="middle" fontSize="12" fill="#666" transform={`rotate(-90, ${padding - 45}, ${height / 2})`}>
+          Resultado Acumulado no Dia (pontos)
+        </text>
+        <text x={width / 2} y={height - 15} textAnchor="middle" fontSize="12" fill="#666">
+          Dias
+        </text>
+      </svg>
+    </div>
+  );
+}
+
 // Componente de Evolução Diária do Saldo
 interface DailyBalanceProps {
   data: { date: string; balance: number; operations: number }[]
@@ -577,7 +748,7 @@ export const DailyBalanceChart: React.FC<DailyBalanceProps> = ({
   return (
     <div className="bg-white rounded-lg border p-4">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
-      <svg width={width} height={height} className="border rounded">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto border rounded">
         {/* Grid */}
         <defs>
           <pattern id="dailyGrid" width="50" height="30" patternUnits="userSpaceOnUse">
@@ -724,7 +895,7 @@ export const OperationsByMinuteChart: React.FC<OperationsByMinuteProps> = ({
   return (
     <div className="bg-white rounded-lg border p-4">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
-      <svg width={width} height={height} className="border rounded">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto border rounded">
         {/* Grid */}
         <defs>
           <pattern id="minuteGrid" width="30" height="30" patternUnits="userSpaceOnUse">
@@ -865,7 +1036,7 @@ export const OperationsScatterChart: React.FC<OperationsScatterProps> = ({
   return (
     <div className="bg-white rounded-lg border p-4">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
-      <svg width={width} height={height} className="border rounded">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto border rounded">
         {/* Grid */}
         <defs>
           <pattern id="scatterGrid" width="40" height="30" patternUnits="userSpaceOnUse">
@@ -965,14 +1136,6 @@ export const OperationsScatterChart: React.FC<OperationsScatterProps> = ({
   )
 }
 
-// Componente de Evolução Diária de Resultados (Intraday)
-interface DailyEvolutionProps {
-  data: { time: string; cumulativeResult: number; operationResult: number }[]
-  title: string
-  height?: number
-  width?: number
-}
-
 // Componente específico para Performance Mensal (linha)
 interface MonthlyPerformanceProps {
   data: { label: string; value: number }[]
@@ -1027,7 +1190,7 @@ export const MonthlyPerformanceChart: React.FC<MonthlyPerformanceProps> = ({
         </span>
       </div>
       
-      <svg width={width} height={height} className="border rounded">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto border rounded">
         {/* Grid */}
         <defs>
           <pattern id="monthlyGrid" width="50" height="30" patternUnits="userSpaceOnUse">
@@ -1116,136 +1279,113 @@ export const MonthlyPerformanceChart: React.FC<MonthlyPerformanceProps> = ({
   )
 }
 
-export const DailyEvolutionChart: React.FC<DailyEvolutionProps> = ({ 
-  data, 
-  title, 
-  height = 350, 
-  width = 900 
+// NOVO: Componente para Múltiplas Curvas de Capital
+interface MultiEquityCurveProps {
+  data: Record<string, { date: string; cumulative: number }[]>;
+  title: string;
+  height?: number;
+  width?: number;
+}
+
+export const MultiEquityCurveChart: React.FC<MultiEquityCurveProps> = ({
+  data,
+  title,
+  height = 400,
+  width = 900,
 }) => {
-  if (!data || data.length === 0) {
+  const allPoints = Object.values(data).flat();
+  if (allPoints.length === 0) {
     return (
       <div className="bg-gray-50 rounded-lg p-4 text-center">
         <p className="text-gray-500">Sem dados para exibir</p>
       </div>
-    )
+    );
   }
+  
+  const allDates = allPoints.map(p => new Date(p.date).getTime());
+  const allValues = allPoints.map(p => p.cumulative);
+  
+  const minDate = Math.min(...allDates);
+  const maxDate = Math.max(...allDates);
+  const dateRange = maxDate - minDate || 1;
+  
+  const maxValue = Math.max(...allValues, 0);
+  const minValue = Math.min(...allValues, 0);
+  const valueRange = maxValue - minValue || 1;
 
-  const maxValue = Math.max(...data.map(d => d.cumulativeResult))
-  const minValue = Math.min(...data.map(d => d.cumulativeResult))
-  const range = maxValue - minValue || 1
+  const padding = 60;
+  const chartWidth = width - 2 * padding;
+  const chartHeight = height - 2 * padding;
 
-  const padding = 60
-  const chartWidth = width - 2 * padding
-  const chartHeight = height - 2 * padding
+  const xScale = (date: number) => padding + ((date - minDate) / dateRange) * chartWidth;
+  const yScale = (value: number) => padding + ((maxValue - value) / valueRange) * chartHeight;
 
-  const points = data.map((point, index) => {
-    const x = padding + (index / (data.length - 1)) * chartWidth
-    const y = padding + ((maxValue - point.cumulativeResult) / range) * chartHeight
-    return `${x},${y}`
-  }).join(' ')
+  const colors = [
+    '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#d946ef',
+    '#06b6d4', '#f97316', '#ec4899', '#6b7280', '#14b8a6', '#6366f1',
+  ];
 
-  const zeroY = padding + ((maxValue - 0) / range) * chartHeight
+  const robotSeries = Object.entries(data).map(([robotName, points], index) => ({
+    name: robotName,
+    color: colors[index % colors.length],
+    polyline: points.map(p => `${xScale(new Date(p.date).getTime())},${yScale(p.cumulative)}`).join(' '),
+  }));
 
   return (
     <div className="bg-white rounded-lg border p-4">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
-      <svg width={width} height={height} className="border rounded">
-        {/* Grid */}
+      <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
+      <div className="flex flex-wrap gap-x-4 gap-y-2 mb-4">
+        {robotSeries.map(series => (
+          <div key={series.name} className="flex items-center space-x-2">
+            <div className="w-4 h-2 rounded-full" style={{ backgroundColor: series.color }}></div>
+            <span className="text-xs font-medium">{series.name}</span>
+          </div>
+        ))}
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto border rounded">
+        {/* Grid and Axes */}
         <defs>
-          <pattern id="evolutionGrid" width="50" height="30" patternUnits="userSpaceOnUse">
+          <pattern id="multiCurveGrid" width="50" height="30" patternUnits="userSpaceOnUse">
             <path d="M 50 0 L 0 0 0 30" fill="none" stroke="#f0f0f0" strokeWidth="1"/>
           </pattern>
         </defs>
-        <rect width="100%" height="100%" fill="url(#evolutionGrid)" />
-        
-        {/* Linha zero */}
-        <line 
-          x1={padding} 
-          y1={zeroY} 
-          x2={width - padding} 
-          y2={zeroY} 
-          stroke="#666" 
-          strokeWidth="1" 
-          strokeDasharray="5,5"
-        />
-        
-        {/* Eixos */}
+        <rect width="100%" height="100%" fill="url(#multiCurveGrid)" />
+        <line x1={padding} y1={yScale(0)} x2={width - padding} y2={yScale(0)} stroke="#333" strokeWidth="1.5" />
         <line x1={padding} y1={padding} x2={padding} y2={height - padding} stroke="#666" strokeWidth="2"/>
         <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#666" strokeWidth="2"/>
-        
-        {/* Área preenchida */}
-        <polygon
-          fill="#3b82f6"
-          fillOpacity="0.1"
-          points={`${padding},${zeroY} ${points} ${width - padding},${zeroY}`}
-        />
-        
-        {/* Linha de evolução */}
-        <polyline
-          fill="none"
-          stroke="#3b82f6"
-          strokeWidth="3"
-          points={points}
-        />
-        
-        {/* Pontos de operações */}
-        {data.map((point, index) => {
-          const x = padding + (index / (data.length - 1)) * chartWidth
-          const y = padding + ((maxValue - point.cumulativeResult) / range) * chartHeight
-          const color = point.operationResult >= 0 ? '#10b981' : '#ef4444'
-          
+
+        {/* Polylines for each robot */}
+        {robotSeries.map(series => (
+          <polyline key={series.name} fill="none" stroke={series.color} strokeWidth="2" points={series.polyline} />
+        ))}
+
+        {/* Y-Axis Labels */}
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const value = minValue + ratio * valueRange;
           return (
-            <circle
-              key={index}
-              cx={x}
-              cy={y}
-              r="4"
-              fill={color}
-              stroke="#fff"
-              strokeWidth="2"
-            />
-          )
-        })}
-        
-        {/* Labels do eixo X (horários) */}
-        {data.map((point, index) => {
-          if (index % Math.ceil(data.length / 8) === 0) {
-            const x = padding + (index / (data.length - 1)) * chartWidth
-            return (
-              <text
-                key={index}
-                x={x}
-                y={height - padding + 20}
-                textAnchor="middle"
-                fontSize="11"
-                fill="#666"
-              >
-                {point.time}
-              </text>
-            )
-          }
-          return null
-        })}
-        
-        {/* Labels do eixo Y */}
-        {[0, 0.25, 0.5, 0.75, 1].map((ratio, index) => {
-          const value = minValue + ratio * range
-          const y = padding + (1 - ratio) * chartHeight
-          return (
-            <text key={index} x={padding - 10} y={y + 4} textAnchor="end" fontSize="12" fill="#666">
+            <text key={ratio} x={padding - 8} y={yScale(value)} textAnchor="end" fontSize="11" fill="#666" dy="4">
               {value.toFixed(0)}
             </text>
-          )
+          );
         })}
-        
-        {/* Títulos dos eixos */}
-        <text x={padding - 40} y={height / 2} textAnchor="middle" fontSize="12" fill="#666" transform={`rotate(-90, ${padding - 40}, ${height / 2})`}>
+
+        {/* X-Axis Labels */}
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const dateValue = new Date(minDate + ratio * dateRange);
+          return (
+            <text key={ratio} x={xScale(dateValue.getTime())} y={height - padding + 20} textAnchor="middle" fontSize="10" fill="#666">
+              {dateValue.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+            </text>
+          );
+        })}
+
+        <text x={padding - 45} y={height / 2} textAnchor="middle" fontSize="12" fill="#666" transform={`rotate(-90, ${padding - 45}, ${height / 2})`}>
           Resultado Acumulado (pontos)
         </text>
-        <text x={width / 2} y={height - 10} textAnchor="middle" fontSize="12" fill="#666">
-          Horário
+        <text x={width / 2} y={height - 15} textAnchor="middle" fontSize="12" fill="#666">
+          Tempo
         </text>
       </svg>
     </div>
-  )
-}
+  );
+};

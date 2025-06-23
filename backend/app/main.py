@@ -56,11 +56,11 @@ app.add_middleware(
 )
 
 # Inclui os routers (onde os endpoints específicos são definidos)
-app.include_router(operacoes.router) # Inclui as rotas de /api/v1/operacoes
-app.include_router(robos.router)
-app.include_router(uploads.router)
-app.include_router(analytics.router) # Inclui as rotas de /api/v1/analytics
-app.include_router(analytics_advanced.router) # Inclui as rotas de /api/v1/analytics-advanced
+app.include_router(operacoes.router, prefix=settings.API_V1_STR) # Inclui as rotas de /api/v1/operacoes
+app.include_router(robos.router, prefix=settings.API_V1_STR)
+app.include_router(uploads.router, prefix=settings.API_V1_STR)
+app.include_router(analytics.router, prefix=settings.API_V1_STR) # Inclui as rotas de /api/v1/analytics
+app.include_router(analytics_advanced.router, prefix=settings.API_V1_STR) # Inclui as rotas de /api/v1/analytics-advanced
 
 # Endpoint raiz de verificação de saúde (health check)
 @app.get(f"{settings.API_V1_STR}/health", tags=["Health"])

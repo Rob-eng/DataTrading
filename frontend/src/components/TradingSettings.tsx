@@ -55,7 +55,7 @@ const TradingSettings: React.FC<TradingSettingsProps> = ({
     setIsOpen(false)
   }
 
-  const IconComponent = perfilOptions[tempConfig.perfilRisco].icon
+  // const IconComponent = perfilOptions[tempConfig.perfilRisco].icon
 
   return (
     <div className="mb-6">
@@ -203,7 +203,7 @@ const TradingSettings: React.FC<TradingSettingsProps> = ({
                     <span className="ml-2 font-semibold">{tempConfig.contratos}</span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Total de Robôs:</span>
+                    <span className="text-gray-600">Robôs Selecionados:</span>
                     <span className="ml-2 font-semibold">{totalRobos}</span>
                   </div>
                   <div>
@@ -222,10 +222,10 @@ const TradingSettings: React.FC<TradingSettingsProps> = ({
                   </div>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Cálculo: {tempConfig.contratos} contratos × {totalRobos} robôs × R$ {tempConfig.valorGarantia.toLocaleString()}/contrato = R$ {tempConfig.margemTotal.toLocaleString()}
+                  Cálculo: {tempConfig.contratos} contratos × {totalRobos} robôs selecionados × R$ {tempConfig.valorGarantia.toLocaleString()}/contrato = R$ {tempConfig.margemTotal.toLocaleString()}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  💡 Esta é a margem total necessária para todos os robôs operarem simultaneamente
+                  💡 Esta é a margem necessária para os robôs selecionados operarem simultaneamente
                 </p>
               </div>
 

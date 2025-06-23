@@ -15,7 +15,7 @@ from ..core.config import settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v1/uploads",
+    prefix="/uploads",
     tags=["Uploads"],
     responses={404: {"description": "Não encontrado"}},
 )
@@ -195,19 +195,31 @@ class CSVOperationProcessor:
                 self._add_error(index, "Campos obrigatórios ausentes (Abertura ou Resultado)")
                 return None
             
-            # Converter data de abertura
+            # Converter data de abertura - PRESERVAR HORÁRIO EXATO DO ARQUIVO
             try:
-                data_abertura = pd.to_datetime(data_abertura_raw, dayfirst=True, errors='raise')
+                # Usar utc=False para não assumir UTC e manter horário local exato
+                data_abertura = pd.to_datetime(data_abertura_raw, dayfirst=True, utc=False, errors='raise')
+                # Garantir que seja naive (sem timezone) para preservar horário exato
+                if hasattr(data_abertura, 'tz_localize'):
+                    data_abertura = data_abertura.tz_localize(None)
+                elif data_abertura.tz is not None:
+                    data_abertura = data_abertura.replace(tzinfo=None)
             except Exception as e:
                 self._add_error(index, f"Data abertura inválida '{data_abertura_raw}': {e}")
                 return None
             
-            # Converter data de fechamento (opcional)
+            # Converter data de fechamento (opcional) - PRESERVAR HORÁRIO EXATO DO ARQUIVO
             data_fechamento = None
             fechamento_raw = row.get('Fechamento')
             if pd.notna(fechamento_raw):
                 try:
-                    data_fechamento = pd.to_datetime(fechamento_raw, dayfirst=True, errors='raise')
+                    # Usar utc=False para não assumir UTC e manter horário local exato
+                    data_fechamento = pd.to_datetime(fechamento_raw, dayfirst=True, utc=False, errors='raise')
+                    # Garantir que seja naive (sem timezone) para preservar horário exato
+                    if hasattr(data_fechamento, 'tz_localize'):
+                        data_fechamento = data_fechamento.tz_localize(None)
+                    elif data_fechamento.tz is not None:
+                        data_fechamento = data_fechamento.replace(tzinfo=None)
                 except Exception as e:
                     self._add_error(index, f"Data fechamento inválida '{fechamento_raw}': {e}", level='warning')
                     # Continua processamento mesmo com erro no fechamento

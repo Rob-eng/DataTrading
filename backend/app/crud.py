@@ -115,15 +115,25 @@ def get_operacoes(db: Session, schema_name: str = settings.DEFAULT_UPLOAD_SCHEMA
 
 def get_operacoes_by_robo(db: Session, robo_id: int, schema_name: str = settings.DEFAULT_UPLOAD_SCHEMA, skip: int = 0, limit: int = 100) -> List[models.Operacao]:
     """Lista operações de um robô específico"""
-    query = text(f"""
-        SELECT id, robo_id, "Resultado_Valor", "Abertura", "Fechamento", ativo, lotes, tipo, criado_em, atualizado_em, fonte_dados_id
-        FROM {schema_name}.operacoes
-        WHERE robo_id = :robo_id
-        ORDER BY "Abertura" DESC
-        LIMIT :limit OFFSET :skip
-    """)
-    
-    results = db.execute(query, {"robo_id": robo_id, "limit": limit, "skip": skip}).fetchall()
+    # Para simulação, usar um limite muito alto para garantir que pega todas as operações
+    if limit >= 50000:  # Indicativo de que é para simulação
+        query = text(f"""
+            SELECT id, robo_id, "Resultado_Valor", "Abertura", "Fechamento", ativo, lotes, tipo, criado_em, atualizado_em, fonte_dados_id
+            FROM {schema_name}.operacoes
+            WHERE robo_id = :robo_id
+            ORDER BY "Abertura" ASC
+        """)
+        results = db.execute(query, {"robo_id": robo_id}).fetchall()
+    else:
+        # Para outras consultas, manter o comportamento original
+        query = text(f"""
+            SELECT id, robo_id, "Resultado_Valor", "Abertura", "Fechamento", ativo, lotes, tipo, criado_em, atualizado_em, fonte_dados_id
+            FROM {schema_name}.operacoes
+            WHERE robo_id = :robo_id
+            ORDER BY "Abertura" DESC
+            LIMIT :limit OFFSET :skip
+        """)
+        results = db.execute(query, {"robo_id": robo_id, "limit": limit, "skip": skip}).fetchall()
     
     operacoes = []
     for result in results:
@@ -198,13 +208,23 @@ def get_operacoes_by_tipo(db: Session, tipo: models.TipoOperacaoEnum, schema_nam
 
 def count_operacoes(db: Session, schema_name: str = settings.DEFAULT_UPLOAD_SCHEMA) -> int:
     """Conta o total de operações"""
-    set_search_path(db, schema_name)
-    return db.query(models.Operacao).count()
+    try:
+        query = text(f"SELECT COUNT(*) FROM {schema_name}.operacoes")
+        result = db.execute(query).fetchone()
+        return result[0] if result else 0
+    except Exception as e:
+        logger.error(f"Erro ao contar operações no schema '{schema_name}': {e}")
+        return 0
 
 def count_robos(db: Session, schema_name: str = settings.DEFAULT_UPLOAD_SCHEMA) -> int:
     """Conta o total de robôs"""
-    set_search_path(db, schema_name)
-    return db.query(models.Robo).count()
+    try:
+        query = text(f"SELECT COUNT(*) FROM {schema_name}.robos")
+        result = db.execute(query).fetchone()
+        return result[0] if result else 0
+    except Exception as e:
+        logger.error(f"Erro ao contar robôs no schema '{schema_name}': {e}")
+        return 0
 
 # === FUNÇÕES ESPECÍFICAS PARA ANALYTICS ===
 
@@ -265,4 +285,32 @@ def delete_robo(db: Session, robo_id: int, schema_name: str = settings.DEFAULT_U
         else:
             logger.warning(f"Não é possível deletar robô {robo_id}: tem {operacoes_count} operações associadas")
             return False
-    return False 
+    return False
+
+def delete_all_operacoes(db: Session, schema_name: str = settings.DEFAULT_UPLOAD_SCHEMA) -> int:
+    """Delete TODAS as operações de um schema - USE COM CUIDADO!"""
+    try:
+        query = text(f"DELETE FROM {schema_name}.operacoes")
+        result = db.execute(query)
+        deleted_count = result.rowcount
+        db.commit()
+        logger.warning(f"TODAS as {deleted_count} operações do schema '{schema_name}' foram deletadas")
+        return deleted_count
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Erro ao deletar todas as operações do schema '{schema_name}': {e}")
+        raise
+
+def delete_all_robos(db: Session, schema_name: str = settings.DEFAULT_UPLOAD_SCHEMA) -> int:
+    """Delete TODOS os robôs de um schema - USE COM CUIDADO!"""
+    try:
+        query = text(f"DELETE FROM {schema_name}.robos")
+        result = db.execute(query)
+        deleted_count = result.rowcount
+        db.commit()
+        logger.warning(f"TODOS os {deleted_count} robôs do schema '{schema_name}' foram deletados")
+        return deleted_count
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Erro ao deletar todos os robôs do schema '{schema_name}': {e}")
+        raise 

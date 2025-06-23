@@ -9,7 +9,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v1/robos",
+    prefix="/robos",
     tags=["Robôs"],
     responses={404: {"description": "Não encontrado"}},
 )

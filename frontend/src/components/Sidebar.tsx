@@ -1,5 +1,5 @@
 import React from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, NavLink } from 'react-router-dom'
 import { 
   BarChart3, 
   Bot, 
@@ -7,19 +7,23 @@ import {
   Upload, 
   Home,
   Activity,
-  Target
+  Target,
+  LayoutDashboard,
+  BarChart2,
+  SlidersHorizontal,
+  ArrowLeftRight
 } from 'lucide-react'
 
 const Sidebar: React.FC = () => {
   const location = useLocation()
 
   const menuItems = [
-    { path: '/', icon: Home, label: 'Dashboard' },
-    { path: '/analytics', icon: BarChart3, label: 'Analytics' },
-    { path: '/advanced-analytics', icon: Target, label: 'Analytics Avançados' },
-    { path: '/robots', icon: Bot, label: 'Robôs' },
-    { path: '/operations', icon: TrendingUp, label: 'Operações' },
-    { path: '/upload', icon: Upload, label: 'Upload' },
+    { name: 'Dashboard', path: '/', icon: LayoutDashboard },
+    { name: 'Analytics', path: '/analytics', icon: BarChart2 },
+    { name: 'Simulação', path: '/simulation', icon: SlidersHorizontal },
+    { name: 'Operações', path: '/operations', icon: ArrowLeftRight },
+    { name: 'Robôs', path: '/robots', icon: Bot },
+    { name: 'Upload', path: '/upload', icon: Upload },
   ]
 
   return (
@@ -37,7 +41,7 @@ const Sidebar: React.FC = () => {
           const isActive = location.pathname === item.path
           
           return (
-            <Link
+            <NavLink
               key={item.path}
               to={item.path}
               className={`flex items-center px-6 py-3 text-sm font-medium transition-colors duration-200 ${
@@ -47,8 +51,8 @@ const Sidebar: React.FC = () => {
               }`}
             >
               <Icon className="h-5 w-5 mr-3" />
-              {item.label}
-            </Link>
+              {item.name}
+            </NavLink>
           )
         })}
       </nav>

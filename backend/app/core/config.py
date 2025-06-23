@@ -133,6 +133,7 @@ class Settings(BaseSettings):
     # Taxas de referência (valores anualizados em %)
     CDI_RATE_ANNUAL: float = 11.75  # Taxa CDI atual (pode ser atualizada via API)
     SELIC_RATE_ANNUAL: float = 11.75  # Taxa Selic atual
+    RISK_FREE_RATE_ANNUAL: float = 10.85 # Taxa livre de risco para Sharpe/Sortino (CDI histórico)
     
     # === CONFIGURAÇÕES DE ANÁLISE TEMPORAL ===
     
@@ -154,7 +155,7 @@ class Settings(BaseSettings):
 
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file="../.env",
         env_file_encoding='utf-8',
         extra='ignore'
     )

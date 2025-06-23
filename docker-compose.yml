@@ -1,5 +1,3 @@
-version: '3.8' # Especifica a versão do formato do arquivo Compose
-
 services:
   # Serviço do Backend FastAPI
   backend:

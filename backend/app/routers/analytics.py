@@ -14,7 +14,7 @@ from ..core.config import settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v1/analytics",
+    prefix="/analytics",
     tags=["Analytics & Métricas"],
     responses={404: {"description": "Não encontrado"}},
 )

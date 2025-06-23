@@ -17,8 +17,12 @@ const Upload: React.FC = () => {
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [dragActive, setDragActive] = useState(false)
   const [selectedRobot, setSelectedRobot] = useState('')
-  const [selectedSchema, setSelectedSchema] = useState('uploads_usuarios')
+  const [selectedSchema] = useState('oficial')
   const [newRobotName, setNewRobotName] = useState('')
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploads, setUploads] = useState<any[]>([])
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
 
   const robots = [
     { value: '', label: 'Selecionar Robô' },
@@ -170,14 +174,9 @@ const Upload: React.FC = () => {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Schema de Destino
             </label>
-            <select 
-              value={selectedSchema}
-              onChange={(e) => setSelectedSchema(e.target.value)}
-              className="input-field"
-            >
-              <option value="uploads_usuarios">Uploads de Usuários</option>
-              <option value="oficial">Oficial (Dados Iniciais)</option>
-            </select>
+                          <div className="px-3 py-2 bg-gray-100 border border-gray-300 rounded-md text-gray-700">
+                📊 Dados Oficiais
+              </div>
           </div>
 
           <div>

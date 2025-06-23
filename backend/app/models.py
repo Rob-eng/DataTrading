@@ -47,14 +47,18 @@ class Operacao(Base):
     # O tipo Float no banco pode armazenar inteiros sem problemas.
     resultado = Column(Float, nullable=False, name="Resultado_Valor")
 
-    # Datas e Horas das operações
-    data_abertura = Column(DateTime(timezone=True), index=True, nullable=False, name="Abertura")
-    data_fechamento = Column(DateTime(timezone=True), nullable=True, name="Fechamento") # Pode ser nulo se a op estiver aberta
+    # Datas e Horas das operações - SEM timezone para preservar horários exatos do arquivo
+    data_abertura = Column(DateTime(timezone=False), index=True, nullable=False, name="Abertura")
+    data_fechamento = Column(DateTime(timezone=False), nullable=True, name="Fechamento") # Pode ser nulo se a op estiver aberta
 
     # Informações adicionais da operação
     ativo = Column(String(50), nullable=True) # Ex: "WINM24", "PETR4"
     lotes = Column(Float, nullable=True)      # Quantidade de lotes/contratos
     tipo = Column(DBEnum(TipoOperacaoEnum, name="tipo_operacao_enum_v2"), nullable=True, default=TipoOperacaoEnum.DESCONHECIDO)
+    
+    # Campos para análises avançadas de risco
+    mae = Column(Float, nullable=True)        # Maximum Adverse Excursion - pior excursão adversa
+    mfe = Column(Float, nullable=True)        # Maximum Favorable Excursion - melhor excursão favorável
 
     # Coluna para registrar quando o registro foi criado no banco
     # server_default=func.now() usa a função NOW() do PostgreSQL

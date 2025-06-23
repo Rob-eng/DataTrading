@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react'
-import { Activity, Search, Filter, Calendar, TrendingUp, TrendingDown, Download, Eye } from 'lucide-react'
+import { Activity, Search, TrendingUp, TrendingDown, Download, Eye, AlertTriangle, Database, RefreshCw, Trash2 } from 'lucide-react'
 import apiService, { Operacao, Robo } from '../services/api'
+import { useTradingContext } from '../App'
 
 const Operations: React.FC = () => {
+  const { contractsPerRobot } = useTradingContext()
   const [operations, setOperations] = useState<Operacao[]>([])
   const [robots, setRobots] = useState<Robo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedSchema, setSelectedSchema] = useState('uploads_usuarios')
+  const [selectedSchema] = useState('oficial')
+  
+  // Configuração do valor por ponto (pode ser movida para o contexto depois se necessário)
+  const pointValue = 0.20;
   
   // Filtros
   const [searchTerm, setSearchTerm] = useState('')
@@ -17,6 +22,12 @@ const Operations: React.FC = () => {
   const [resultFilter, setResultFilter] = useState('') // 'positive', 'negative', ''
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 50
+
+  // Estados para limpeza de dados
+  const [showCleanupModal, setShowCleanupModal] = useState(false)
+  const [cleanupLoading, setCleanupLoading] = useState(false)
+  const [statistics, setStatistics] = useState<any>(null)
+  const [statsLoading, setStatsLoading] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -66,14 +77,14 @@ const Operations: React.FC = () => {
   const startIndex = (currentPage - 1) * itemsPerPage
   const paginatedOperations = filteredOperations.slice(startIndex, startIndex + itemsPerPage)
 
-  // Estatísticas das operações filtradas
+  // Estatísticas das operações filtradas - CORRIGIDAS com configuração de contratos
   const stats = {
     total: filteredOperations.length,
     positive: filteredOperations.filter(op => op.resultado > 0).length,
     negative: filteredOperations.filter(op => op.resultado < 0).length,
-    totalResult: filteredOperations.reduce((sum, op) => sum + op.resultado, 0),
+    totalResult: filteredOperations.reduce((sum, op) => sum + (op.resultado * pointValue * contractsPerRobot), 0),
     avgResult: filteredOperations.length > 0 ? 
-               filteredOperations.reduce((sum, op) => sum + op.resultado, 0) / filteredOperations.length : 0
+               filteredOperations.reduce((sum, op) => sum + (op.resultado * pointValue * contractsPerRobot), 0) / filteredOperations.length : 0
   }
 
   const getRobotName = (robotId: number) => {
@@ -92,6 +103,41 @@ const Operations: React.FC = () => {
     })
   }
 
+  const loadStatistics = async () => {
+    try {
+      setStatsLoading(true);
+      const stats = await apiService.getEstatisticasOperacoes(selectedSchema);
+      setStatistics(stats);
+    } catch (err) {
+      console.error('Erro ao carregar estatísticas:', err);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  const handleCleanupData = async (manterRobos: boolean = false) => {
+    try {
+      setCleanupLoading(true);
+      await apiService.limparDadosSchema(selectedSchema, true, manterRobos);
+      
+      // Recarregar dados após limpeza
+      await loadData();
+      setShowCleanupModal(false);
+      
+      alert(`Dados do schema "${selectedSchema}" foram limpos com sucesso!${manterRobos ? ' (Robôs mantidos)' : ''}`);
+    } catch (err) {
+      console.error('Erro ao limpar dados:', err);
+      alert('Erro ao limpar dados. Verifique o console para mais detalhes.');
+    } finally {
+      setCleanupLoading(false);
+    }
+  };
+
+  const openCleanupModal = () => {
+    setShowCleanupModal(true);
+    loadStatistics();
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -107,10 +153,22 @@ const Operations: React.FC = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Operações de Trading</h1>
-        <button className="btn-secondary flex items-center space-x-2">
-          <Download className="h-4 w-4" />
-          <span>Exportar</span>
-        </button>
+        <div className="flex items-center gap-4">
+          <div className="text-sm text-gray-600 bg-blue-50 px-3 py-1 rounded-full">
+            📊 {contractsPerRobot} contrato{contractsPerRobot !== 1 ? 's' : ''} por operação
+          </div>
+          <button 
+            onClick={openCleanupModal}
+            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+          >
+            <Database className="h-4 w-4" />
+            <span>Limpar Dados</span>
+          </button>
+          <button className="btn-secondary flex items-center space-x-2">
+            <Download className="h-4 w-4" />
+            <span>Exportar</span>
+          </button>
+        </div>
       </div>
 
       {/* Estatísticas */}
@@ -181,15 +239,6 @@ const Operations: React.FC = () => {
               className="input-field flex-1"
             />
           </div>
-
-          <select 
-            value={selectedSchema}
-            onChange={(e) => setSelectedSchema(e.target.value)}
-            className="input-field"
-          >
-            <option value="oficial">Oficial</option>
-            <option value="uploads_usuarios">Uploads</option>
-          </select>
 
           <select 
             value={selectedRobot}
@@ -284,10 +333,10 @@ const Operations: React.FC = () => {
                       Quantidade
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Preço
+                      Resultado (Pts)
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Resultado
+                      Resultado (R$)
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Ações
@@ -295,47 +344,53 @@ const Operations: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {paginatedOperations.map((operation) => (
-                    <tr key={operation.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        <div>
-                          <div className="font-medium">{formatDate(operation.data_abertura)}</div>
-                          <div className="text-gray-500">{formatTime(operation.data_abertura)}</div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                          {getRobotName(operation.robo_id)}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {operation.ativo || 'N/A'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          operation.tipo === 'COMPRA' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                        }`}>
-                          {operation.tipo || 'N/A'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {operation.quantidade?.toLocaleString('pt-BR') || 'N/A'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        R$ {operation.preco_abertura?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || 'N/A'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <span className={operation.resultado >= 0 ? 'text-green-600' : 'text-red-600'}>
-                          {operation.resultado >= 0 ? '+' : ''}{operation.resultado.toFixed(2)} pts
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        <button className="text-blue-600 hover:text-blue-900">
-                          <Eye className="h-4 w-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {paginatedOperations.map((operation) => {
+                    const resultadoReais = operation.resultado * pointValue * contractsPerRobot;
+                    
+                    return (
+                      <tr key={operation.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <div>
+                            <div className="font-medium">{formatDate(operation.data_abertura)}</div>
+                            <div className="text-gray-500">{formatTime(operation.data_abertura)}</div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            {getRobotName(operation.robo_id)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {operation.ativo || 'N/A'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            operation.tipo === 'COMPRA' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                          }`}>
+                            {operation.tipo || 'N/A'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {contractsPerRobot} contrato{contractsPerRobot !== 1 ? 's' : ''}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <span className={operation.resultado >= 0 ? 'text-green-600' : 'text-red-600'}>
+                            {operation.resultado >= 0 ? '+' : ''}{operation.resultado.toFixed(1)} pts
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <span className={resultadoReais >= 0 ? 'text-green-600' : 'text-red-600'}>
+                            R$ {resultadoReais >= 0 ? '+' : ''}{resultadoReais.toFixed(2)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          <button className="text-blue-600 hover:text-blue-900">
+                            <Eye className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -369,7 +424,7 @@ const Operations: React.FC = () => {
                   <span className="text-sm text-gray-700">Itens por página:</span>
                   <select 
                     value={itemsPerPage}
-                    onChange={(e) => {
+                    onChange={(_e) => {
                       setCurrentPage(1)
                       // Note: itemsPerPage is const, you'd need to make it state if you want this to work
                     }}
@@ -390,12 +445,73 @@ const Operations: React.FC = () => {
       <div className="flex justify-center">
         <button
           onClick={loadData}
-          disabled={loading}
-          className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+          className="btn-secondary flex items-center space-x-2"
         >
-          {loading ? 'Carregando...' : 'Atualizar Dados'}
+          <RefreshCw className="h-4 w-4" />
+          <span>Recarregar Dados</span>
         </button>
       </div>
+
+      {/* Modal de Limpeza de Dados */}
+      {showCleanupModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex items-center mb-4">
+              <AlertTriangle className="h-6 w-6 text-red-600 mr-2" />
+              <h3 className="text-lg font-semibold text-gray-900">Limpar Dados</h3>
+            </div>
+            
+            {statsLoading ? (
+              <div className="text-center py-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                <p className="text-gray-600">Carregando estatísticas...</p>
+              </div>
+            ) : statistics ? (
+              <div className="mb-4">
+                <p className="text-gray-700 mb-2">
+                  Esta ação irá remover todos os dados do schema "{selectedSchema}":
+                </p>
+                <ul className="text-sm text-gray-600 mb-4 space-y-1">
+                  <li>• {statistics.total_operacoes} operações</li>
+                  <li>• {statistics.total_robos} robôs</li>
+                  <li>• Período: {statistics.periodo_dados}</li>
+                </ul>
+                <p className="text-red-600 text-sm font-medium">
+                  ⚠️ Esta ação não pode ser desfeita!
+                </p>
+              </div>
+            ) : (
+              <p className="text-gray-700 mb-4">
+                Esta ação irá remover todos os dados do schema "{selectedSchema}".
+                Esta ação não pode ser desfeita!
+              </p>
+            )}
+
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowCleanupModal(false)}
+                className="btn-secondary"
+                disabled={cleanupLoading}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleCleanupData(true)}
+                className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                disabled={cleanupLoading}
+              >
+                {cleanupLoading ? 'Limpando...' : 'Limpar (Manter Robôs)'}
+              </button>
+              <button
+                onClick={() => handleCleanupData(false)}
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {cleanupLoading ? 'Limpando...' : 'Limpar Tudo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

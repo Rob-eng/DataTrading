@@ -172,6 +172,21 @@ docker-compose down
 
 # Remover volumes (dados do banco)
 docker-compose down -v
+
+# Status dos containers
+docker-compose ps
+
+# Logs específicos
+docker-compose logs --tail=10 backend
+docker-compose logs --tail=10 nginx
+
+# Reiniciar serviços
+docker-compose restart nginx
+docker-compose restart backend
+
+# Rebuild completo
+docker-compose down
+docker-compose up --build -d
 ```
 
 ## 🔍 Troubleshooting
@@ -205,3 +220,15 @@ Este projeto está sob a licença MIT. Veja o arquivo LICENSE para detalhes.
 ## 📞 Suporte
 
 Para suporte, abra uma issue no repositório ou entre em contato com a equipe de desenvolvimento. 
+
+┌─────────────────┐    ┌──────────────┐    ┌─────────────────┐
+│  Frontend       │    │   Nginx      │    │   Backend       │
+│  React/Vite     │───▶│   Proxy      │───▶│   FastAPI       │
+│  :3000         │    │   :80        │    │   :8000         │
+└─────────────────┘    └──────────────┘    └─────────────────┘
+                                                    │
+                                           ┌─────────────────┐
+                                           │   PostgreSQL    │
+                                           │   Database      │
+                                           │   :5433         │
+                                           └─────────────────┘ 
