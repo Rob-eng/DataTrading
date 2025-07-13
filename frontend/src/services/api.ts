@@ -3,7 +3,7 @@ import axios from 'axios'
 // Lê a URL base da API das variáveis de ambiente do Vite.
 // Em um arquivo .env na raiz do frontend, você pode definir:
 // VITE_API_BASE_URL=http://localhost/api/v1
-const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost/api/v1';
+const baseURL = '/api/v1';
 
 // Criar instância do axios com configurações padrão
 export const api = axios.create({

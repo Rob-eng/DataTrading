@@ -21,7 +21,8 @@ services:
       # Este volume é para que as alterações no código local reflitam no contêiner
       # instantaneamente quando o Uvicorn está rodando com --reload.
       - ./backend/app:/app/app # Monta a pasta ./backend/app local em /app/app no contêiner
-
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
   # Serviço do Banco de Dados PostgreSQL
   db:
     image: postgres:15-alpine # Usa uma imagem oficial e leve do PostgreSQL
@@ -51,7 +52,8 @@ services:
       # - "443:443" # Para HTTPS no futuro
     volumes:
       # Monta o arquivo de configuração customizado do Nginx
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro # :ro = read-only
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
       # Se tiver frontend estático no futuro, montaria aqui:
       # - ./frontend/dist:/usr/share/nginx/html/static:ro
     depends_on:
@@ -59,6 +61,7 @@ services:
     networks:
       - app_network
 
+   
 # Define a rede customizada para comunicação entre os contêineres
 networks:
   app_network:
