@@ -38,3 +38,7 @@ Thumbs.db
 # Outputs de build do frontend (se você adicionar um no futuro)
 # frontend/dist/
 # frontend/node_modules/
+frontend/dist/
+*.backup
+.env.save
+tash pop
